@@ -1,0 +1,27 @@
+run_id: flat_dqn
+seed: 0
+total_steps: 400000
+max_episode_steps: 4000
+gamma: 0.99
+lr: 0.001
+hidden: 128
+buffer_capacity: 100000
+batch_size: 128
+learn_start: 2000
+train_every: 4
+target_sync_every: 2000
+epsilon_start: 1.0
+epsilon_end: 0.05
+epsilon_decay_steps: 100000
+per_beta_start: 0.4
+per_beta_end: 1.0
+curriculum_switch_step: 120000
+eval_every: 20000
+eval_episodes: 20
+checkpoint_every: 50000
+reward:
+  score_scale: 1.0
+  life_loss_penalty: -30.0
+  game_over_penalty: -50.0
+  step_cost: -0.01
+logic_commit: "FILL_AT_RUNTIME"   # pin via scripts/record_commit (Task 27)
