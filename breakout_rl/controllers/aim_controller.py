@@ -26,13 +26,19 @@ def target_paddle_x(game: Breakout, region: int) -> Optional[float]:
     return clamped
 
 
-def choose_action(game: Breakout, region: int) -> int:
-    tx = target_paddle_x(game, region)
-    if tx is None:
-        return ACTION_NOOP  # hold while ascending
-    dx = tx - game.paddle_x
+def action_for_target(paddle_x: float, target_x: float) -> int:
+    """Primitive action that nudges the paddle toward ``target_x`` (a 25px step, so we
+    use a half-step deadband to avoid oscillating around the target)."""
+    dx = target_x - paddle_x
     if dx > _HALF_STEP:
         return ACTION_EAST
     if dx < -_HALF_STEP:
         return ACTION_WEST
     return ACTION_NOOP
+
+
+def choose_action(game: Breakout, region: int) -> int:
+    tx = target_paddle_x(game, region)
+    if tx is None:
+        return ACTION_NOOP  # hold while ascending
+    return action_for_target(game.paddle_x, tx)

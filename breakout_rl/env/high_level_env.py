@@ -7,8 +7,8 @@ from gymnasium import spaces
 from server.logic import Breakout
 from breakout_rl.env.observation import ObservationBuilder, OBS_DIM
 from breakout_rl.env.rewards import RewardConfig, base_reward
-from breakout_rl.controllers.aim_controller import choose_action
-from breakout_rl.constants import DT, DECISION_LINE_Y, ACTION_WEST, ACTION_EAST
+from breakout_rl.controllers.aim_controller import target_paddle_x, action_for_target
+from breakout_rl.constants import DT, DECISION_LINE_Y, ACTION_NOOP, ACTION_WEST, ACTION_EAST
 
 HIGH_OBS_DIM = OBS_DIM  # reuse the shared observation (brick grid + ball + paddle + velocity)
 
@@ -41,7 +41,11 @@ class HighLevelEnv(gym.Env):
         self.curr_ball_speed = ball_speed
 
     def _obs(self) -> np.ndarray:
-        return self.obs_builder.build(self.game.get_state(), DT)
+        # Return the observation built from the most recent primitive frame. We must NOT
+        # rebuild from the current state here: the builder is stateful and already consumed
+        # this frame in _advance_one_primitive, so rebuilding would diff a frame against
+        # itself and zero out the recovered ball velocity.
+        return self._last_obs
 
     def _advance_one_primitive(self, action: int):
         before = self.game.get_state()
@@ -51,7 +55,7 @@ class HighLevelEnv(gym.Env):
             self.game.move_paddle("EAST")
         self.game.update(DT)
         after = self.game.get_state()
-        self.obs_builder.build(after, DT)  # keep velocity history warm
+        self._last_obs = self.obs_builder.build(after, DT)  # advance velocity history + keep obs
         return base_reward(before, after, self.reward_cfg)
 
     def _at_decision_point(self, prev_ball_y: float) -> bool:
@@ -62,12 +66,30 @@ class HighLevelEnv(gym.Env):
 
     def _advance_to_decision_point(self, region: Optional[int]):
         """Advance with the controller until a new decision point / terminal / life loss.
-        region=None means 'no aim yet' (used only during reset bootstrapping)."""
+        region=None means 'no aim yet' (used only during reset bootstrapping).
+
+        The landing target is constant during a clean descent (no bricks below the
+        decision line), so it is computed once per descent and reused — this avoids
+        re-running predict_landing every primitive step (an O(descent_len^2) waste).
+        Behaviour is identical to recomputing because the target only depends on the
+        ball's (constant) landing x and the paddle width, not the moving paddle_x."""
         R, k, discount = 0.0, 0, 1.0
         prev_ball_y = self.game.ball_y
         lives0 = self.game.lives
+        cached_target: Optional[float] = None
+        bricks_at_cache = -1
         while k < self.max_option_steps:
-            a = 0 if region is None else choose_action(self.game, region)
+            if region is None:
+                a = ACTION_NOOP
+            elif self.game.ball_vy <= 0:
+                cached_target = None  # ascending: no aim possible, invalidate cache
+                a = ACTION_NOOP
+            else:
+                bricks_now = int(self.game.brick_array[:, 4].sum())
+                if cached_target is None or bricks_now != bricks_at_cache:
+                    cached_target = target_paddle_x(self.game, region)
+                    bricks_at_cache = bricks_now
+                a = ACTION_NOOP if cached_target is None else action_for_target(self.game.paddle_x, cached_target)
             r = self._advance_one_primitive(a)
             R += discount * r
             discount *= self.gamma
@@ -91,6 +113,7 @@ class HighLevelEnv(gym.Env):
         self.game.paddle_x = (self.game.width - self.game.paddle_width) / 2.0
         self.game.reset_ball()
         self.obs_builder.reset()
+        self._last_obs = self.obs_builder.build(self.game.get_state(), DT)  # initial frame (v=0)
         # advance (NOOP) to the first decision point so step() always starts aimed
         self._advance_to_decision_point(region=None)
         return self._obs(), {}

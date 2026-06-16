@@ -61,6 +61,12 @@ class BreakoutEnv(gym.Env):
 
         self.obs_builder.reset()
         self.steps = 0
+        # descent cache: predict_landing is constant during a clean descent, so we recompute
+        # it only when the descent (re)starts or a brick changes — exact, but avoids the
+        # O(descent_len^2) cost of re-rolling the predictor every descending step.
+        self._cached_landing = None
+        self._bricks_at_cache = int(self.game.brick_array[:, 4].sum())
+        self._last_vy = self.game.ball_vy
         state = self.game.get_state()
         self._prev_state_for_test = state
         landing = predict_landing(self.game)
@@ -80,7 +86,24 @@ class BreakoutEnv(gym.Env):
         terminated = bool(self.game.game_over)
         base = base_reward(before, after, self.reward_cfg)
 
-        landing = predict_landing(self.game) if self.game.ball_vy > 0 else None
+        descending = self.game.ball_vy > 0
+        bricks_now = int(self.game.brick_array[:, 4].sum())
+        if not descending:
+            self._cached_landing = None
+        else:
+            # The "landing is constant during a clean descent" premise only holds while the
+            # ball is ABOVE the paddle line. Once ball_y + r >= paddle_y, predict_landing
+            # degenerates to a ~1-step rollout (~current ball_x) as the ball falls past a
+            # missed paddle, so a cached long-descent value would be stale. Recompute there
+            # (it's cheap) and whenever the descent (re)starts or a brick changes -> stays
+            # bit-exact with per-step prediction.
+            near_paddle = self.game.ball_y + self.game.ball_radius >= self.game.paddle_y
+            if (self._cached_landing is None or bricks_now != self._bricks_at_cache
+                    or self._last_vy <= 0 or near_paddle):
+                self._cached_landing = predict_landing(self.game)
+                self._bricks_at_cache = bricks_now
+        self._last_vy = self.game.ball_vy
+        landing = self._cached_landing
         cur_phi = potential(after, landing, is_terminal=terminated)
         reward = base + self.gamma * cur_phi - self.prev_phi
         self.prev_phi = 0.0 if terminated else cur_phi
