@@ -247,16 +247,107 @@ From `breakout_rl/configs/flat_dqn.yaml` (flat) and `aim.yaml` (SMDP):
 - Intermediate checkpoints / TensorBoard logs are gitignored; only `online_final.pt`
   checkpoints are kept (force-added).
 
-## 11. Upstream contribution (candidate)
+## 11. Upstream contribution — PR: fix brick-collision resolution
 
-While reviewing `server/logic.py` we found a **brick-collision resolution bug**: when the
-ball overlaps two bricks in the same frame (e.g. straddling the 10px gap between two
-bricks), only the *lowest-index* brick is removed (`np.where(overlap)[0][0]`), and the
-AABB reflection is computed off that one brick. In a reproducible case the ball **passes
-straight through the second brick without breaking it or bouncing**. A fix (resolve by
-deepest penetration / handle all overlapped bricks) is a candidate PR to
-`mariolpantunes/si2-breakout`. *Not* applied to the experiment branch (it changes
-dynamics and would require re-pinning and re-running).
+A reviewing pass over `server/logic.py` found a real collision bug. Below is the proposed
+pull request to `mariolpantunes/si2-breakout` (verified locally; **not** applied to the
+branch used for the reported experiments — see the caveat at the end).
+
+**Title:** `fix: resolve all overlapped bricks and prevent corner-graze tunnelling`
+
+### Symptom
+When the ball overlaps **two bricks in the same physics frame** — e.g. straddling the
+10 px gap between two bricks in a row — only one brick is removed and, in a reproducible
+case, **the ball passes straight through the second brick without breaking it or
+bouncing**.
+
+### Root cause (`server/logic.py`, the brick-collision block, ~lines 202–226)
+Two issues compound:
+
+1. **First-in-array resolution.** The hit brick is chosen as `np.where(overlap)[0][0]` —
+   the *lowest index*, not the brick actually being contacted — and only that single
+   brick is deactivated. A genuinely-overlapped neighbour survives the frame.
+2. **Penetration-only axis selection.** The reflection axis is picked purely by
+   `overlap_x < overlap_y`. On a corner graze the horizontal overlap can be a few pixels
+   while the ball is travelling almost purely vertically (`ball_vx ≈ 0`). The code then
+   flips `vx` (a no-op when `vx == 0`) and leaves `vy` untouched, so the ball continues
+   upward through the surviving neighbour — a tunnelling artifact.
+
+### Reproduction (deterministic; uses no RNG)
+```python
+from server.logic import Breakout
+g = Breakout()
+for b in g.bricks:
+    b.active = (b.index in (0, 1))   # keep only row-1 bricks 0 (105–175) and 1 (185–255)
+g._sync_bricks_to_numpy()
+# ball centred in the 10px gap (x=180 spans 172–188 -> overlaps both), moving straight up
+g.ball_x, g.ball_y, g.ball_vx, g.ball_vy = 180.0, 83.0, 0.0, -100.0
+g.update(0.05)
+print(g.bricks[0].active, g.bricks[1].active, g.ball_vy)
+# BEFORE FIX: False  True  -100.0   <- brick 1 survives, ball keeps going up (tunnels)
+# AFTER  FIX: False  False +100.0   <- both break, ball bounces down
+```
+
+### Fix
+Resolve **every** overlapped brick in the frame, reflect off the **deepest** (true
+contact) brick, and only flip a velocity component that is actually carrying the ball
+into the brick:
+
+```python
+overlap_idxs = np.where(overlap)[0]
+
+# deepest-penetration brick = the true contact (not array order)
+ox_all = np.minimum(self.ball_x + self.ball_radius - lefts,
+                    rights - (self.ball_x - self.ball_radius))
+oy_all = np.minimum(self.ball_y + self.ball_radius - tops,
+                    bottoms - (self.ball_y - self.ball_radius))
+pen = np.minimum(ox_all, oy_all)
+pen[~overlap] = -np.inf
+hit_idx = int(np.argmax(pen))
+
+# deactivate EVERY overlapped brick so the ball cannot tunnel through a neighbour
+for hit in overlap_idxs:
+    bidx = int(self.brick_array[hit, 5])
+    self.brick_array[hit, 4] = 0.0
+    self.bricks[bidx].active = False
+    self.score += 3
+
+b_left, b_right = lefts[hit_idx], rights[hit_idx]
+b_top, b_bottom = tops[hit_idx], bottoms[hit_idx]
+overlap_x = min(self.ball_x + self.ball_radius - b_left, b_right - (self.ball_x - self.ball_radius))
+overlap_y = min(self.ball_y + self.ball_radius - b_top, b_bottom - (self.ball_y - self.ball_radius))
+
+# only flip a component that is moving the ball INTO the brick (no corner-graze tunnel)
+if overlap_x < overlap_y and self.ball_vx != 0.0:
+    self.ball_vx = -self.ball_vx
+else:
+    self.ball_vy = -self.ball_vy
+```
+
+### Regression test (add to `tests/test_logic.py`)
+```python
+def test_simultaneous_two_brick_overlap_breaks_both_and_bounces():
+    g = Breakout(width=600, height=400)
+    for b in g.bricks:
+        b.active = (b.index in (0, 1))
+    g._sync_bricks_to_numpy()
+    g.ball_x, g.ball_y, g.ball_vx, g.ball_vy = 180.0, 83.0, 0.0, -100.0
+    g.update(0.05)
+    assert g.bricks[0].active is False
+    assert g.bricks[1].active is False          # neighbour no longer survives
+    assert g.ball_vy > 0                         # ball bounces down, does not tunnel
+```
+
+### Verification & impact
+Locally verified: the fix breaks both bricks and reflects the ball downward, and the
+existing single-brick collision test (`test_brick_collision_and_scoring`) is unchanged
+(score 103, brick deactivated, board-clear respawn). The change is small, has no extra
+dependencies, and only alters behaviour in the multi-overlap / corner-graze edge case.
+
+**Caveat (reproducibility):** this fix changes game dynamics, so it is **not** merged into
+the branch used for the reported experiments. If it is accepted upstream and adopted here,
+re-pin `logic_commit` (`scripts/record_commit.py`) and re-run training before updating the
+numbers in §9.
 
 ## 12. Repository layout (RL)
 
