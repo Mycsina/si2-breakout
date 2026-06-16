@@ -1,27 +1,27 @@
+batch_size: 128
+buffer_capacity: 50000
+checkpoint_every: 10000
+curriculum_switch_option: 20000
+epsilon_decay_options: 20000
+epsilon_end: 0.05
+epsilon_start: 1.0
+eval_episodes: 20
+eval_every: 5000
+gamma: 0.99
+hidden: 128
+learn_start: 1000
+logic_commit: 21f600c791e803408daff1a62ad3701c2cc77446
+lr: 0.0005
+max_option_steps: 3000
+per_beta_end: 1.0
+per_beta_start: 0.4
+reward:
+  game_over_penalty: -50.0
+  life_loss_penalty: -30.0
+  score_scale: 1.0
+  step_cost: -0.01
 run_id: aim_smdp
 seed: 0
-total_options: 60000          # high-level decisions (each spans many primitive steps)
-max_option_steps: 3000
-gamma: 0.99
-lr: 0.0005
-hidden: 128
-buffer_capacity: 50000
-batch_size: 128
-learn_start: 1000
-train_every: 1
 target_sync_every: 1000
-epsilon_start: 1.0
-epsilon_end: 0.05
-epsilon_decay_options: 20000
-per_beta_start: 0.4
-per_beta_end: 1.0
-curriculum_switch_option: 20000
-eval_every: 5000
-eval_episodes: 20
-checkpoint_every: 10000
-reward:
-  score_scale: 1.0
-  life_loss_penalty: -30.0
-  game_over_penalty: -50.0
-  step_cost: -0.01
-logic_commit: "FILL_AT_RUNTIME"
+total_options: 60000
+train_every: 1
