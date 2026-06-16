@@ -1,0 +1,3 @@
+center           clears=0.24 bricks/life=5.01
+random_region    clears=2.31 bricks/life=15.79
+oracle_region    clears=2.09 bricks/life=14.57

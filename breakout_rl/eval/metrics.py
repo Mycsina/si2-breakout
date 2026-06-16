@@ -48,3 +48,32 @@ def evaluate_policy(policy: Callable[[np.ndarray], int], episodes: int,
 def evaluate_agent(agent, episodes: int, **kw) -> Dict[str, float]:
     """Adapter: wrap a DQNAgent as a greedy policy."""
     return evaluate_policy(lambda o: agent.select_action(o, epsilon=0.0), episodes=episodes, **kw)
+
+
+def evaluate_hierarchical(agent, episodes: int, max_steps: int = 4000,
+                          paddle_width: float = 80.0, ball_speed: float = 300.0,
+                          seed: int = 0):
+    """Evaluate a high-level region policy in the HighLevelEnv, aggregating clearing
+    metrics across full games (each game = many options)."""
+    from breakout_rl.env.high_level_env import HighLevelEnv
+    import numpy as np
+    env = HighLevelEnv(max_option_steps=max_steps, paddle_width=paddle_width, ball_speed=ball_speed)
+    clears, bricks_total = [], []
+    for ep in range(episodes):
+        obs, _ = env.reset(seed=seed + ep)
+        start = int(env.game.brick_array[:, 4].sum())
+        broken = 0
+        prev = start
+        while True:
+            region = agent.select_action(obs, epsilon=0.0)
+            obs, R, term, trunc, info = env.step(region)
+            now = info["bricks_left"]
+            if now < prev:
+                broken += (prev - now)
+            prev = now
+            if term or trunc:
+                break
+        clears.append(broken // 16)
+        bricks_total.append(broken / 3.0)
+    return {"mean_clears": float(np.mean(clears)),
+            "mean_bricks_per_life": float(np.mean(bricks_total))}
