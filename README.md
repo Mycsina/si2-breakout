@@ -79,6 +79,11 @@ Two agents that share one codebase (`breakout_rl/`):
 
 Both reuse the same network, replay buffer, observation builder, and rollout predictor.
 
+On top of the hierarchy we then investigated two extensions (§9): a **distributional**
+high-level learner (**QR-DQN**, which learns the *return distribution* per region instead
+of a scalar mean) and a learning-free **model-based planner** (Monte-Carlo one-volley
+lookahead) that serves as a model-based reference point for the learned policies.
+
 ## 2. How to run
 
 This project uses [`uv`](https://docs.astral.sh/uv/). The Python environment (incl.
@@ -87,7 +92,7 @@ This project uses [`uv`](https://docs.astral.sh/uv/). The Python environment (in
 
 ```bash
 uv sync                                   # create .venv and install everything
-.venv/bin/python -m pytest -q             # run the test suite (47 tests)
+.venv/bin/python -m pytest -q             # run the test suite (64 tests)
 ```
 
 All commands below assume `.venv/bin/python` (no activation needed). On a GPU box the
@@ -103,7 +108,10 @@ flat-DQN trainer uses CUDA automatically if available; otherwise it runs on CPU.
 # --- Train the hierarchical SMDP aim policy (writes checkpoints/aim_smdp/) ---
 .venv/bin/python -m breakout_rl.train.train_aim --config breakout_rl/configs/aim.yaml
 
-# --- Multi-seed training + comparison table ---
+# --- Distributional variant: QR-DQN high level (writes checkpoints/aim_smdp_qr/) ---
+.venv/bin/python -m breakout_rl.train.train_aim --config breakout_rl/configs/aim_qr.yaml
+
+# --- Multi-seed training + comparison table (random / flat DQN / SMDP / QR-DQN / planner) ---
 bash scripts/train_seeds.sh
 .venv/bin/python -m breakout_rl.eval.evaluate --episodes 30 --seeds 3
 .venv/bin/python -m breakout_rl.eval.plot_curves --pattern "checkpoints/flat_dqn*/log.csv" --out docs/curves_flat_dqn.png
@@ -248,15 +256,18 @@ the **best-eval** checkpoint — not the last — is saved as `online_final.pt`.
 
 ## 9. Training curves and final comparison
 
-Full runs on an RTX 3080 Laptop GPU: the **flat DQN for 400k steps** and the **SMDP aim
-policy** trained to convergence under plateau early stopping (it ran to **130k options**,
-peaking ~80k, ≈30 min). Both training and held-out evaluation seed everything; evaluation
-uses held-out seeds (`10_000 + step`).
+Full runs: the **flat DQN for 400k steps** and the **SMDP aim policy** trained to
+convergence under plateau early stopping (130k options, peaking ~80k, ≈30 min on an RTX 3080
+Laptop GPU). We then add two extensions evaluated on the *same* held-out harness: a
+**distributional QR-DQN** high level (identical SMDP setup, auto-stopped at **120k options**)
+and a learning-free **model-based MC planner**. Both training and held-out evaluation seed
+everything; evaluation uses held-out seeds (`10_000 + step`).
 
 ### Learning curves
 
 ![flat DQN learning curve](docs/curves_flat_dqn.png)
 ![SMDP aim learning curve](docs/curves_aim_smdp.png)
+![SMDP aim: scalar DQN vs distributional QR-DQN](docs/curves_aim_smdp_qr.png)
 
 - **Flat DQN** (`docs/curves_flat_dqn.png`, eval *score* vs. step): essentially flat at ~0
   for the first ~200k steps — the reactive policy needs a lot of experience before it
@@ -273,25 +284,41 @@ uses held-out seeds (`10_000 + step`).
 |---|---|---|---|---|---|---|---|---|---|
 | board-clears | 2.60 | 3.33 | 3.40 | 3.10 | 3.37 | **3.53** | 3.33 | 3.40 | 3.37 |
 
+- **QR-DQN vs DQN** (`docs/curves_aim_smdp_qr.png`, both SMDP high levels, eval *board-clears*
+  vs. option): the distributional learner (orange) sits **above** the scalar DQN (blue) for
+  most of training — a **warmer start** (2.93 vs. 2.53 at 5k) and a higher peak
+  (**3.70 at 70k** vs. 3.53 at 80k) — i.e. better **sample efficiency**, before both settle
+  into the same 3.3–3.5 plateau and the **same held-out ceiling** (3.40, below). Modelling
+  the per-region *return distribution* (the spread comes from the stochastic bounce) speeds
+  learning but does **not** raise the ceiling — that is set by the controller (§7), not the
+  value representation.
+
 ### Final comparison (held-out, 30 episodes × 3 seeds, equal 4000-primitive-step budget)
 
-Both agents are scored over the **same primitive-step budget** so the hierarchy's longer
-options don't give it extra game time (`evaluate_hierarchical` accumulates `info["k"]`).
+All agents are scored over the **same primitive-step budget** so the hierarchy's longer
+options don't give it extra game time (the high-level driver accumulates `info["k"]`).
 
 | agent | clears (mean±std) | bricks/life | score |
 |---|---|---|---|
 | random | 0.00 ± 0.00 | 1.69 | 0.0 |
 | flat DQN | 2.36 ± 0.36 | 4.19 | 21.4 |
-| **hierarchical (SMDP)** | **3.40 ± 0.00** | **20.91** | **586.2** |
+| hierarchical — SMDP DQN | 3.40 ± 0.00 | 20.91 | 586.2 |
+| hierarchical — SMDP QR-DQN | 3.40 ± 0.03 | 21.05 | 574.3 |
+| **model-based MC planner** | **3.72 ± 0.09** | **22.38** | **621.1** |
 
-**Findings.** The hierarchical agent **dominates** on every metric: **+44%** board-clears,
-**5.0× the bricks-per-life**, and **~27× the game score** of the flat DQN — at **zero
-cross-seed variance** (±0.00 clears vs. ±0.36), because the physics aim controller intercepts
-the ball almost deterministically while the learned high-level policy decides *where to send
-it*. The flat agent's low score (21.4) reflects that it loses its lives quickly; the
-hierarchical agent survives the full step budget and keeps breaking bricks (≈63 bricks +
-board-clear bonuses → 586.2). This matches the §7 gate prediction: the win comes from
-**board-aware, multi-step credit assignment**, not from per-volley aiming precision.
+**Findings.** Every region-steering agent **crushes** the flat DQN: the hierarchical
+learners deliver **+44%** board-clears, **5× the bricks-per-life**, and **~27× the game
+score** of the flat baseline, at near-**zero cross-seed variance** (±0.00–0.03 clears vs.
+±0.36), because the physics aim controller intercepts the ball almost deterministically while
+the high level only has to decide *where to send it*. The flat agent's low score (21.4)
+reflects that it loses its lives quickly; the steering agents survive the full step budget
+and keep breaking bricks (≈63 bricks + board-clear bonuses). Within the steering agents the
+spread is small and bounded: the scalar and distributional learners **tie at 3.40 clears**,
+and the model-based planner tops the table at **3.72** — all three in a tight **3.4–3.7**
+band. This sharpens the §7 picture: the decisive factor is *steering the contact region at
+all* (vs. the center-only 0.24 baseline), after which the coarse 3-region, uniform-±bounce
+controller caps how much further **any** method — distributional value or exhaustive
+per-volley search — can push.
 
 **Endgame aiming (brick-centroid feature + empty-volley penalty).** An early agent tended to
 *corner-camp* in the endgame — driving the ball into a wall so its steep ricochet flung it
@@ -309,11 +336,71 @@ sits near the achievable ceiling for this controller.
 *(Raw numbers in `checkpoints/comparison.csv`. The hierarchical `score` is now reported by
 `evaluate_hierarchical`; earlier it defaulted to 0.0 because that metric was not populated.)*
 
-**Deploy check.** The deploy adapter (`breakout_rl/deploy/trained_agent.py`) shares the
-exact observation builder used in training (guarded by `tests/test_observation_parity.py`,
-so the wire and training observations match bit-for-bit) and loads either checkpoint to act
-against the live WebSocket server via the §2 commands — paddle tracks the ball and the score
-climbs in the browser viewer.
+### Distributional value — QR-DQN
+
+The high level is also implemented as a **distributional** agent (`agents/qr_dqn_agent.py`):
+instead of a scalar `Q(s, region)` it predicts **N = 51 quantiles** of the SMDP return
+distribution per region (`QRDuelingMLP`, a per-quantile dueling head), trained with the
+**quantile-Huber loss** at fractions `τ_i = (i + 0.5)/N`. Everything else is held identical to
+the scalar agent — **Double-DQN** next-action (by mean-quantile argmax), **PER**, and the SMDP
+`γ^k` discount carried into the distributional Bellman target — so the comparison isolates the
+value representation; the greedy action is the argmax of the mean quantile.
+
+The result (curve above, and the 3.40 tie in the table) is the textbook one: the
+distributional target is a **richer learning signal** — the return spread induced by the
+uniform-±bounce is modelled rather than averaged away — so QR-DQN **learns faster** and peaks
+higher, but converges to the **same held-out ceiling** as scalar DQN. Distributional RL buys
+sample efficiency here, not a better final policy, because the limit is the controller.
+
+### Model-based planning baseline — MC planner
+
+`agents/planner.py` is a **learning-free** high level: at each decision point it clones the
+live game and, for each of the three contact regions, **Monte-Carlo rolls the upcoming volley
+forward** (`n_samples = 16`) through `HighLevelEnv`'s *own* dynamics — same controller, same
+brick-counting, same option boundary — then commits to the region with the **highest expected
+bricks broken** that volley. Because the rollouts reuse the real simulator there is no separate
+model to drift; the planner simply trades **decision-time compute** (3 × 16 = 48 rollouts per
+decision) for the experience the RL agents amortize into a single forward pass.
+
+It is the **strongest** policy in the table (**3.72 clears**, +0.32 over the learned agents),
+yet still squarely inside the 3.4–3.7 band — so even exhaustive one-volley search cannot escape
+the controller ceiling, only approach it more tightly. Note this is a purely *myopic*
+(single-volley, greedy) policy beating the multi-step learners, which is why we soften the
+original §7 wording: the gain over center-only is about *steering the region at all*, not about
+look-ahead depth.
+
+**A measurement bug we caught (and fixed).** The server's paddle bounce draws from the global
+`random` stream, so the planner snapshots/restores it to keep the live episode reproducible.
+Done naively, that *also* makes the volley which actually executes draw its bounce from the
+**same RNG state the first rollout started from** — so the planner partly *peeks* at the
+realized outcome instead of estimating an expectation. The fix is to reseed the rollouts to an
+**independent per-decision sub-stream** (still restoring the execution stream); the table
+reports the **decorrelated, honest** planner. A controlled check (`scripts/planner_analysis.py`)
+quantifies it:
+
+| rollouts/region (n) | shared-RNG (naive) | decorrelated (honest) |
+|---|---|---|
+| 1 | 3.70 | 3.25 |
+| 16 | 3.90 | 3.75 |
+
+Two reads at once: more rollouts sharpen the expected-breaks estimate (**3.25 → 3.75** as
+n: 1 → 16), and the RNG peek inflates clears by **+0.45 at n = 1**, shrinking to **+0.15 at
+n = 16** (averaging dilutes the single correlated sample). *(These are 20-episode single-seed
+probes; the 3.72 in the main table is the 30 × 3 held-out figure.)*
+
+**Deploy check & a train/deploy parity bug.** The deploy adapter
+(`breakout_rl/deploy/trained_agent.py`) shares the exact observation builder used in training
+(guarded by `tests/test_observation_parity.py`, so the wire and training observations match
+bit-for-bit) and loads either checkpoint to act against the live WebSocket server via the §2
+commands. Shipping it surfaced a subtle bug worth recording: the deploy loop originally
+detected a high-level decision point with its *own* predicate (a ball apex below the decision
+line) which, in this gravity-free physics, **never fired** for brick-reaching volleys — so the
+region stayed frozen at its CENTER default and the **trained policy was never actually
+consulted in the viewer** (the agent looked passive and left-biased, while the offline eval
+numbers were correct all along). The fix mirrors the observation-parity guard: training and
+deploy now call **one shared predicate**, `crossed_decision_line(prev_ball_y, ball_y, vy)`
+(`env/high_level_env.py`), so the two can never silently diverge again. With it the viewer
+agent re-chooses a region on every descent and plays as the table predicts.
 
 ## 10. Reproducibility
 
@@ -438,12 +525,14 @@ breakout_rl/
   env/breakout_env.py     Gymnasium env (flat DQN)
   env/high_level_env.py   SMDP options wrapper (hierarchy)
   agents/replay.py        prioritized experience replay
-  agents/networks.py      dueling MLP
+  agents/networks.py      dueling MLP (+ per-quantile dueling head for QR-DQN)
   agents/dqn_agent.py     Double-DQN agent (reused by both levels)
+  agents/qr_dqn_agent.py  distributional QR-DQN agent (quantile-Huber loss)
+  agents/planner.py       model-based Monte-Carlo one-volley planner
   controllers/aim_controller.py   physics-based low-level aim
   train/                  curriculum + flat/SMDP training entrypoints
   eval/                   metrics, multi-seed comparison, probe, plots
   deploy/trained_agent.py WebSocket deploy (flat + hierarchical)
-  configs/                flat_dqn.yaml, aim.yaml
-tests/                    47 tests covering every module
+  configs/                flat_dqn.yaml, aim.yaml, aim_qr.yaml
+tests/                    64 tests covering every module
 ```
