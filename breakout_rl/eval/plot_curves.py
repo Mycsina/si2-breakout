@@ -7,21 +7,29 @@ import numpy as np
 
 
 def load(path):
+    """Read (x, y) eval points from a run log. Auto-detects the schema: the flat DQN
+    logs step/eval_score; the SMDP agent logs option/eval_clears. Returns the y-column
+    name too so the caller can label the axis correctly."""
     steps, evals = [], []
     with open(path) as f:
-        for row in csv.DictReader(f):
-            if row.get("eval_score"):
-                steps.append(int(row["step"])); evals.append(float(row["eval_score"]))
-    return steps, evals
+        reader = csv.DictReader(f)
+        fields = reader.fieldnames or []
+        xcol = "step" if "step" in fields else "option"
+        ycol = "eval_score" if "eval_score" in fields else "eval_clears"
+        for row in reader:
+            if row.get(ycol):
+                steps.append(int(row[xcol])); evals.append(float(row[ycol]))
+    return steps, evals, ycol
 
 
 def main(pattern, out):
-    plt.figure()
+    plt.figure(); ylabel = "eval score"
     for path in glob.glob(pattern):
-        s, e = load(path)
+        s, e, ycol = load(path)
         if s:
             plt.plot(s, e, label=path.split("/")[-2])
-    plt.xlabel("training step"); plt.ylabel("eval score"); plt.legend(); plt.grid(True)
+            ylabel = "eval score" if ycol == "eval_score" else "eval clears (boards cleared)"
+    plt.xlabel("training step"); plt.ylabel(ylabel); plt.legend(); plt.grid(True)
     plt.savefig(out, dpi=120, bbox_inches="tight")
     print("wrote", out)
 
