@@ -60,8 +60,8 @@ def evaluate_agent(agent, episodes: int, **kw) -> Dict[str, float]:
     )
 
 
-def evaluate_hierarchical(
-    agent,
+def _evaluate_high_level(
+    region_fn: Callable,
     episodes: int,
     max_steps: int = 4000,
     max_option_steps: int = 3000,
@@ -69,17 +69,18 @@ def evaluate_hierarchical(
     ball_speed: float = 300.0,
     seed: int = 0,
 ):
-    """Evaluate a high-level region policy in the HighLevelEnv, aggregating clearing
-    metrics across full games (each game = many options).
+    """Shared driver for any high-level region policy in the HighLevelEnv, aggregating
+    clearing metrics across full games (each game = many options). ``region_fn(env, obs)``
+    returns the region for the current decision point -- a learned agent ignores ``env``
+    and reads ``obs``; the model-based planner ignores ``obs`` and reads ``env.game``.
 
     The hard-coded aim controller intercepts the ball on almost every volley, so a game
     essentially never ends on its own (lives are practically never lost) and each option
     ends at a decision point long before max_option_steps. A `while term or trunc` loop
     would therefore never terminate. We cap each episode at `max_steps` *primitive* steps
-    (cumulative info["k"]) -- the same horizon used by the flat evaluate_policy -- so both
-    agents are scored over an equal step budget."""
+    (cumulative info["k"]) -- the same horizon used by the flat evaluate_policy -- so all
+    policies are scored over an equal step budget."""
     from breakout_rl.env.high_level_env import HighLevelEnv
-    import numpy as np
 
     env = HighLevelEnv(
         max_option_steps=max_option_steps,
@@ -93,7 +94,7 @@ def evaluate_hierarchical(
         prev = int(env.game.brick_array[:, 4].sum())
         prim_steps = 0
         while True:
-            region = agent.select_action(obs, epsilon=0.0)
+            region = region_fn(env, obs)
             obs, R, term, trunc, info = env.step(region)
             prim_steps += info["k"]
             now = info["bricks_left"]
@@ -113,3 +114,15 @@ def evaluate_hierarchical(
         "mean_score": float(np.mean(scores)),
         "std_score": float(np.std(scores)),
     }
+
+
+def evaluate_hierarchical(agent, episodes: int, **kw):
+    """Evaluate a learned high-level region policy (greedy)."""
+    return _evaluate_high_level(
+        lambda env, obs: agent.select_action(obs, epsilon=0.0), episodes, **kw
+    )
+
+
+def evaluate_planner(planner, episodes: int, **kw):
+    """Evaluate the model-based MC planner, which reads the live game state each step."""
+    return _evaluate_high_level(lambda env, obs: planner.plan(env.game), episodes, **kw)
