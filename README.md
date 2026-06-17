@@ -228,23 +228,30 @@ From `breakout_rl/configs/flat_dqn.yaml` (flat) and `aim.yaml` (SMDP):
 
 | | flat DQN | SMDP aim |
 |---|---|---|
-| horizon | 400k steps | 60k options |
+| horizon | 400k steps | ≤200k options (early-stopped) |
 | γ | 0.99 | 0.99 |
 | learning rate | 1e-3 | 5e-4 |
 | hidden units | 128 | 128 |
 | replay capacity | 100k | 50k |
 | batch size | 128 | 128 |
 | target sync | every 2000 | every 1000 |
-| ε schedule | 1.0 → 0.05 over 100k | 1.0 → 0.05 over 20k |
+| ε schedule | 1.0 → 0.05 over 100k | 1.0 → 0.05 over 40k |
 | PER β | 0.4 → 1.0 | 0.4 → 1.0 |
 | curriculum switch | step 120k | option 20k |
 | reward | score / −30 life / −50 game-over / −0.01 step | same + −2.0 empty-volley |
+| early stop | — | patience 10 evals / Δ 0.02 / warmup 40k |
+
+The SMDP run uses **plateau early stopping** (`breakout_rl/train/early_stop.py`): it trains
+up to the 200k cap but halts once the eval metric (board-clears + `0.01·`bricks/life as a
+fine tiebreaker) has not improved by `>0.02` for 10 consecutive evals past a 40k warmup, and
+the **best-eval** checkpoint — not the last — is saved as `online_final.pt`.
 
 ## 9. Training curves and final comparison
 
 Full runs on an RTX 3080 Laptop GPU: the **flat DQN for 400k steps** and the **SMDP aim
-policy for 60k options** (the latter ≈13.5 min). Both training and held-out evaluation
-seed everything; evaluation uses held-out seeds (`10_000 + step`).
+policy** trained to convergence under plateau early stopping (it ran to **130k options**,
+peaking ~80k, ≈30 min). Both training and held-out evaluation seed everything; evaluation
+uses held-out seeds (`10_000 + step`).
 
 ### Learning curves
 
@@ -257,15 +264,14 @@ seed everything; evaluation uses held-out seeds (`10_000 + step`).
   (13.2 at 220k, peak **22.1 at 360k**, 11.05 at 400k). The large step-to-step swings are
   characteristic of a high-variance reactive value function.
 - **SMDP aim** (`docs/curves_aim_smdp.png`, eval *board-clears* vs. option): a clean,
-  low-variance rise — **2.25 → ~2.95** (stage 1), a step up at the **curriculum switch
-  (option 20k)**, then a steady climb to a peak **3.50 at 60k**. Note the last three evals
-  still trend up (3.35 → 3.45 → 3.50), so the policy had not fully converged at the 60k
-  horizon. Far fewer samples than the flat agent for a stronger policy, because each SMDP
-  backup credits a whole volley.
+  low-variance rise — **2.6 → ~3.3** over the first ~40k (with the **curriculum switch at
+  20k**), then a climb to a peak **≈3.53 around 80k**, after which it **plateaus** (3.3–3.4)
+  through the early stop at **130k**. Far fewer samples than the flat agent for a stronger
+  policy, because each SMDP backup credits a whole volley.
 
-| eval @ option | 5k | 10k | 15k | 20k | 25k | 30k | 40k | 50k | 60k |
+| eval @ option | 10k | 30k | 40k | 50k | 70k | 80k | 100k | 120k | 130k |
 |---|---|---|---|---|---|---|---|---|---|
-| board-clears | 2.25 | 2.95 | 2.90 | 3.05 | 3.30 | 3.15 | 3.30 | 3.35 | **3.50** |
+| board-clears | 2.60 | 3.33 | 3.40 | 3.10 | 3.37 | **3.53** | 3.33 | 3.40 | 3.37 |
 
 ### Final comparison (held-out, 30 episodes × 3 seeds, equal 4000-primitive-step budget)
 
@@ -276,27 +282,29 @@ options don't give it extra game time (`evaluate_hierarchical` accumulates `info
 |---|---|---|---|
 | random | 0.00 ± 0.00 | 1.69 | 0.0 |
 | flat DQN | 2.36 ± 0.36 | 4.19 | 21.4 |
-| **hierarchical (SMDP)** | **3.31 ± 0.02** | **20.58** | **556.8** |
+| **hierarchical (SMDP)** | **3.40 ± 0.00** | **20.91** | **586.2** |
 
-**Findings.** The hierarchical agent **dominates** on every metric: **+40%** board-clears,
-**4.9× the bricks-per-life**, and **~26× the game score** of the flat DQN — at **near-zero
-variance** (±0.02 clears vs. ±0.36), because the physics aim controller intercepts the ball
-almost deterministically while the learned high-level policy decides *where to send it*.
-The flat agent's low score (21.4) reflects that it loses its lives quickly; the hierarchical
-agent survives the full step budget and keeps breaking bricks (≈62 bricks + board-clear
-bonuses → 556.8). This matches the §7 gate prediction: the win comes from **board-aware,
-multi-step credit assignment**, not from per-volley aiming precision.
+**Findings.** The hierarchical agent **dominates** on every metric: **+44%** board-clears,
+**5.0× the bricks-per-life**, and **~27× the game score** of the flat DQN — at **zero
+cross-seed variance** (±0.00 clears vs. ±0.36), because the physics aim controller intercepts
+the ball almost deterministically while the learned high-level policy decides *where to send
+it*. The flat agent's low score (21.4) reflects that it loses its lives quickly; the
+hierarchical agent survives the full step budget and keeps breaking bricks (≈63 bricks +
+board-clear bonuses → 586.2). This matches the §7 gate prediction: the win comes from
+**board-aware, multi-step credit assignment**, not from per-volley aiming precision.
 
 **Endgame aiming (brick-centroid feature + empty-volley penalty).** An early agent tended to
 *corner-camp* in the endgame — driving the ball into a wall so its steep ricochet flung it
 across the board — instead of aiming directly at the surviving bricks. Two learned-policy
 changes address this: the high-level observation gains a **brick-centroid offset** feature
 (signed direction from the ball to the surviving-brick centroid, so `HIGH_OBS_DIM = OBS_DIM+1`)
-and an option that breaks **zero bricks** now incurs a `waste_penalty` (−2.0). This lifted
-clears 3.21 → **3.31** and bricks/life 19.79 → **20.58**; the gain is real but modest, bounded
-by the controller's coarse 3-region aim and the uniform ±bounce randomness (which make the
-last-brick endgame a stochastic search). With the curve still rising at 60k, more options or a
-stronger penalty would likely push further.
+and an option that breaks **zero bricks** now incurs a `waste_penalty` (−2.0). Combined with
+training to convergence under early stopping (auto-stopped at **130k options**, peak ~80k,
+best-eval checkpoint kept), this lifted clears **3.21 → 3.31 → 3.40** and bricks/life
+**19.79 → 20.58 → 20.91** across the three iterations. The remaining gap is **fundamental**,
+not a training shortfall: the controller's coarse 3-region aim and the uniform ±bounce
+randomness make the last-brick endgame a stochastic search (see §7), so the converged policy
+sits near the achievable ceiling for this controller.
 
 *(Raw numbers in `checkpoints/comparison.csv`. The hierarchical `score` is now reported by
 `evaluate_hierarchical`; earlier it defaulted to 0.0 because that metric was not populated.)*
