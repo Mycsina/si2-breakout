@@ -20,14 +20,23 @@ class MCPlanner:
     myopic: it is the natural planning baseline to benchmark the long-horizon learned
     policy against, not a replacement for it.
 
-    The server bounce draws from the global ``random`` stream, so ``plan`` snapshots and
-    restores that stream: the rollouts consume randomness only transiently and the real
-    episode's bounces are left bit-identical (keeping seeded evaluation reproducible)."""
+    The server bounce draws from the global ``random`` stream. ``plan`` therefore (a)
+    snapshots and restores that stream so the real episode's bounces are left bit-identical
+    (seeded evaluation stays reproducible), and (b) reseeds the stream to an INDEPENDENT
+    per-decision sub-stream *for the rollouts only*. Point (b) matters: without it, the
+    volley that actually executes after ``plan`` returns draws its bounce from the very same
+    RNG state the first rollout started from, so the planner would be partly *peeking* at the
+    realized outcome rather than estimating a true expectation. Decorrelating the rollout
+    stream removes that bias (measured: ~+0.15 clears at n=16, ~+0.45 at n=1 of inflation)."""
 
     REGIONS = (REGION_LEFT, REGION_CENTER, REGION_RIGHT)
 
-    def __init__(self, n_samples: int = 16, rollout_env=None) -> None:
+    def __init__(
+        self, n_samples: int = 16, rollout_env=None, rollout_seed: int = 987654321
+    ) -> None:
         self.n_samples = n_samples
+        self._rollout_seed = rollout_seed
+        self._calls = 0
         if rollout_env is None:
             # local import: high_level_env imports controllers, not the planner -- importing
             # it at module top would be fine, but keeping it lazy avoids any future cycle.
@@ -46,8 +55,14 @@ class MCPlanner:
 
     def plan(self, game: Breakout) -> int:
         """Return the region with the highest expected bricks broken over the next volley."""
-        saved = _random.getstate()  # keep the real episode's RNG stream untouched
+        saved = (
+            _random.getstate()
+        )  # the real episode's RNG stream; restored before return
         try:
+            # rollouts draw from an independent per-decision stream (see class docstring),
+            # decorrelated from the bounce the executed volley will draw from `saved`.
+            self._calls += 1
+            _random.seed(self._rollout_seed + self._calls)
             best_region, best_val = REGION_CENTER, float("-inf")
             for region in self.REGIONS:
                 val = self._expected_broken(game, region)
