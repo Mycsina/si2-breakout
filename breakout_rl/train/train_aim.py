@@ -11,6 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 from breakout_rl.env.high_level_env import HighLevelEnv, HIGH_OBS_DIM
 from breakout_rl.env.rewards import RewardConfig
 from breakout_rl.agents.dqn_agent import DQNAgent
+from breakout_rl.agents.qr_dqn_agent import QRDQNAgent
 from breakout_rl.agents.replay import PrioritizedReplay, Transition
 from breakout_rl.train.curriculum import curriculum_params
 from breakout_rl.train.early_stop import EarlyStopper
@@ -40,7 +41,16 @@ def main(cfg_path: str) -> None:
         gamma=cfg["gamma"],
         reward_cfg=RewardConfig(**cfg["reward"]),
     )
-    agent = DQNAgent(HIGH_OBS_DIM, n_actions=3, hidden=cfg["hidden"], lr=cfg["lr"])
+    if cfg.get("algo", "dqn") == "qr_dqn":
+        agent = QRDQNAgent(
+            HIGH_OBS_DIM,
+            n_actions=3,
+            n_quantiles=cfg.get("n_quantiles", 51),
+            hidden=cfg["hidden"],
+            lr=cfg["lr"],
+        )
+    else:
+        agent = DQNAgent(HIGH_OBS_DIM, n_actions=3, hidden=cfg["hidden"], lr=cfg["lr"])
     buffer = PrioritizedReplay(cfg["buffer_capacity"])
 
     pw, bs = curriculum_params(0, cfg["curriculum_switch_option"])

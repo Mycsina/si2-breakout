@@ -1,0 +1,34 @@
+algo: qr_dqn
+n_quantiles: 51
+batch_size: 128
+buffer_capacity: 50000
+checkpoint_every: 10000
+curriculum_switch_option: 20000
+early_stop_min_delta: 0.02
+early_stop_patience: 10
+early_stop_warmup_options: 40000
+epsilon_decay_options: 40000
+epsilon_end: 0.05
+epsilon_start: 1.0
+eval_episodes: 30
+eval_every: 5000
+gamma: 0.99
+hidden: 128
+learn_start: 1000
+logic_commit: 21f600c791e803408daff1a62ad3701c2cc77446
+lr: 0.0005
+max_episode_steps: 6000
+max_option_steps: 3000
+per_beta_end: 1.0
+per_beta_start: 0.4
+reward:
+  game_over_penalty: -50.0
+  life_loss_penalty: -30.0
+  score_scale: 1.0
+  step_cost: -0.01
+  waste_penalty: -2.0
+run_id: aim_smdp_qr
+seed: 0
+target_sync_every: 1000
+total_options: 200000
+train_every: 1

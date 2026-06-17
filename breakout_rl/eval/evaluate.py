@@ -11,8 +11,10 @@ from breakout_rl.eval.metrics import (
     evaluate_policy,
     evaluate_agent,
     evaluate_hierarchical,
+    evaluate_planner,
 )
-from breakout_rl.agents.networks import DuelingMLP
+from breakout_rl.agents.networks import DuelingMLP, QRDuelingMLP
+from breakout_rl.agents.planner import MCPlanner
 from breakout_rl.env.observation import OBS_DIM
 from breakout_rl.env.high_level_env import HIGH_OBS_DIM
 
@@ -30,7 +32,22 @@ def _load(path, in_dim=OBS_DIM):
     return _A()
 
 
-def main(episodes: int, seeds: int):
+def _load_qr(path, in_dim=HIGH_OBS_DIM, n_quantiles=51):
+    # n_quantiles must match aim_qr.yaml; greedy action = argmax of the mean quantile.
+    net = QRDuelingMLP(in_dim, 3, n_quantiles, 128)
+    net.load_state_dict(torch.load(path, map_location="cpu"))
+    net.eval()
+
+    class _A:
+        def select_action(self, obs, epsilon=0.0):
+            with torch.no_grad():
+                q = net(torch.as_tensor(obs).unsqueeze(0)).mean(dim=2)
+                return int(q.argmax(1).item())
+
+    return _A()
+
+
+def main(episodes: int, seeds: int, planner_samples: int = 16):
     rows = []
 
     # random baseline
@@ -55,6 +72,26 @@ def main(episodes: int, seeds: int):
                     ),
                 )
             )
+        for path in glob.glob("checkpoints/aim_smdp_qr/online_final.pt"):
+            rows.append(
+                (
+                    "hierarchical_qr",
+                    seed,
+                    evaluate_hierarchical(
+                        _load_qr(path, HIGH_OBS_DIM), episodes, seed=seed
+                    ),
+                )
+            )
+        # model-based planner baseline (learning-free; needs no checkpoint)
+        rows.append(
+            (
+                "planner_mc",
+                seed,
+                evaluate_planner(
+                    MCPlanner(n_samples=planner_samples), episodes, seed=seed
+                ),
+            )
+        )
 
     # aggregate mean±std per agent
     agg = {}
@@ -79,5 +116,6 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--episodes", type=int, default=30)
     p.add_argument("--seeds", type=int, default=3)
+    p.add_argument("--planner-samples", type=int, default=16)
     a = p.parse_args()
-    main(a.episodes, a.seeds)
+    main(a.episodes, a.seeds, a.planner_samples)
