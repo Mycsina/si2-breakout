@@ -30,13 +30,14 @@ def main(cfg_path: str) -> None:
     buffer = PrioritizedReplay(cfg["buffer_capacity"])
 
     pw, bs = curriculum_params(0, cfg["curriculum_switch_option"]); env.set_curriculum(pw, bs)
-    obs, _ = env.reset(seed=seed); last_loss = 0.0
+    obs, _ = env.reset(seed=seed); last_loss = 0.0; ep_steps = 0
 
     for opt in range(1, cfg["total_options"] + 1):
         pw, bs = curriculum_params(opt, cfg["curriculum_switch_option"]); env.set_curriculum(pw, bs)
         eps = linear(cfg["epsilon_start"], cfg["epsilon_end"], opt / cfg["epsilon_decay_options"])
         region = agent.select_action(obs, eps)
         next_obs, R, term, trunc, info = env.step(region)
+        ep_steps += info["k"]
         # SMDP: store gamma**k as the per-transition discount
         buffer.add(Transition(obs, region, R, next_obs, term, info["gamma_k"]))
         obs = next_obs
@@ -46,9 +47,13 @@ def main(cfg_path: str) -> None:
             last_loss = agent.update(buffer, cfg["batch_size"], beta)
         if opt % cfg["target_sync_every"] == 0:
             agent.sync_target()
-        if term or trunc:
+        # The aim controller almost never drops the ball, so games don't end on their own.
+        # Cap each episode at max_episode_steps *primitive* steps so episodes are finite and,
+        # crucially, the curriculum (applied only on reset) actually switches to stage 2 past
+        # curriculum_switch_option instead of the env staying stuck on the stage-1 settings.
+        if term or trunc or ep_steps >= cfg["max_episode_steps"]:
             cw.writerow([opt, R, info["score"], last_loss, eps, ""]); csv_file.flush()
-            obs, _ = env.reset()
+            obs, _ = env.reset(); ep_steps = 0
         if opt % cfg["eval_every"] == 0:
             stats = evaluate_hierarchical(agent, episodes=cfg["eval_episodes"],
                                           paddle_width=80.0, ball_speed=300.0, seed=10_000 + opt)

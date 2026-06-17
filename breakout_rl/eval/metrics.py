@@ -51,27 +51,36 @@ def evaluate_agent(agent, episodes: int, **kw) -> Dict[str, float]:
 
 
 def evaluate_hierarchical(agent, episodes: int, max_steps: int = 4000,
+                          max_option_steps: int = 3000,
                           paddle_width: float = 80.0, ball_speed: float = 300.0,
                           seed: int = 0):
     """Evaluate a high-level region policy in the HighLevelEnv, aggregating clearing
-    metrics across full games (each game = many options)."""
+    metrics across full games (each game = many options).
+
+    The hard-coded aim controller intercepts the ball on almost every volley, so a game
+    essentially never ends on its own (lives are practically never lost) and each option
+    ends at a decision point long before max_option_steps. A `while term or trunc` loop
+    would therefore never terminate. We cap each episode at `max_steps` *primitive* steps
+    (cumulative info["k"]) -- the same horizon used by the flat evaluate_policy -- so both
+    agents are scored over an equal step budget."""
     from breakout_rl.env.high_level_env import HighLevelEnv
     import numpy as np
-    env = HighLevelEnv(max_option_steps=max_steps, paddle_width=paddle_width, ball_speed=ball_speed)
+    env = HighLevelEnv(max_option_steps=max_option_steps, paddle_width=paddle_width, ball_speed=ball_speed)
     clears, bricks_total = [], []
     for ep in range(episodes):
         obs, _ = env.reset(seed=seed + ep)
-        start = int(env.game.brick_array[:, 4].sum())
         broken = 0
-        prev = start
+        prev = int(env.game.brick_array[:, 4].sum())
+        prim_steps = 0
         while True:
             region = agent.select_action(obs, epsilon=0.0)
             obs, R, term, trunc, info = env.step(region)
+            prim_steps += info["k"]
             now = info["bricks_left"]
             if now < prev:
                 broken += (prev - now)
             prev = now
-            if term or trunc:
+            if term or trunc or prim_steps >= max_steps:
                 break
         clears.append(broken // 16)
         bricks_total.append(broken / 3.0)
