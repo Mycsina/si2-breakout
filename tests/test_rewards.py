@@ -1,4 +1,3 @@
-import math
 from breakout_rl.env.rewards import base_reward, potential, RewardConfig
 
 
@@ -25,8 +24,8 @@ def test_game_over_adds_terminal_penalty():
 
 def test_potential_zero_when_ascending_or_terminal():
     s = {"width": 600, "paddle_x": 100.0, "paddle_width": 80.0}
-    assert potential(s, None, is_terminal=False) == 0.0          # ascending -> landing None
-    assert potential(s, 300.0, is_terminal=True) == 0.0          # terminal
+    assert potential(s, None, is_terminal=False) == 0.0  # ascending -> landing None
+    assert potential(s, 300.0, is_terminal=True) == 0.0  # terminal
 
 
 def test_potential_is_negative_normalized_distance():
@@ -42,6 +41,6 @@ def test_pbrs_discounted_shaping_telescopes_to_terminal_minus_start():
     total = 0.0
     for t in range(len(phis) - 1):
         f = gamma * phis[t + 1] - phis[t]
-        total += (gamma ** t) * f
+        total += (gamma**t) * f
     expected = (gamma ** (len(phis) - 1)) * phis[-1] - phis[0]
     assert abs(total - expected) < 1e-12

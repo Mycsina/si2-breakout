@@ -1,6 +1,5 @@
 import argparse
 import csv
-import os
 import random
 from pathlib import Path
 
@@ -26,17 +25,23 @@ def linear(start, end, frac):
 def main(cfg_path: str) -> None:
     cfg = yaml.safe_load(open(cfg_path))
     seed = cfg["seed"]
-    random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
     run_dir = Path("checkpoints") / cfg["run_id"]
     run_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(str(run_dir / "tb"))
     csv_file = open(run_dir / "log.csv", "w", newline="")
     csv_writer = csv.writer(csv_file)
-    csv_writer.writerow(["step", "episode_return", "episode_score", "loss", "epsilon", "eval_score"])
+    csv_writer.writerow(
+        ["step", "episode_return", "episode_score", "loss", "epsilon", "eval_score"]
+    )
 
     reward_cfg = RewardConfig(**cfg["reward"])
-    env = BreakoutEnv(max_steps=cfg["max_episode_steps"], gamma=cfg["gamma"], reward_cfg=reward_cfg)
+    env = BreakoutEnv(
+        max_steps=cfg["max_episode_steps"], gamma=cfg["gamma"], reward_cfg=reward_cfg
+    )
     agent = DQNAgent(OBS_DIM, n_actions=3, hidden=cfg["hidden"], lr=cfg["lr"])
     buffer = PrioritizedReplay(cfg["buffer_capacity"])
 
@@ -50,7 +55,9 @@ def main(cfg_path: str) -> None:
         pw, bs = curriculum_params(step, cfg["curriculum_switch_step"])
         env.set_curriculum(pw, bs)
 
-        eps = linear(cfg["epsilon_start"], cfg["epsilon_end"], step / cfg["epsilon_decay_steps"])
+        eps = linear(
+            cfg["epsilon_start"], cfg["epsilon_end"], step / cfg["epsilon_decay_steps"]
+        )
         action = agent.select_action(obs, eps)
         next_obs, reward, term, trunc, info = env.step(action)
         buffer.add(Transition(obs, action, reward, next_obs, term, cfg["gamma"]))
@@ -59,7 +66,9 @@ def main(cfg_path: str) -> None:
         ep_score = info["score"]
 
         if len(buffer) >= cfg["learn_start"] and step % cfg["train_every"] == 0:
-            beta = linear(cfg["per_beta_start"], cfg["per_beta_end"], step / cfg["total_steps"])
+            beta = linear(
+                cfg["per_beta_start"], cfg["per_beta_end"], step / cfg["total_steps"]
+            )
             last_loss = agent.update(buffer, cfg["batch_size"], beta)
 
         if step % cfg["target_sync_every"] == 0:
@@ -75,19 +84,27 @@ def main(cfg_path: str) -> None:
             ep_return, ep_score = 0.0, 0
 
         if step % cfg["eval_every"] == 0:
-            stats = evaluate_agent(agent, episodes=cfg["eval_episodes"],
-                                   paddle_width=80.0, ball_speed=300.0, seed=10_000 + step)
+            stats = evaluate_agent(
+                agent,
+                episodes=cfg["eval_episodes"],
+                paddle_width=80.0,
+                ball_speed=300.0,
+                seed=10_000 + step,
+            )
             writer.add_scalar("eval/score", stats["mean_score"], step)
             writer.add_scalar("eval/clears", stats["mean_clears"], step)
             csv_writer.writerow([step, "", "", last_loss, eps, stats["mean_score"]])
             csv_file.flush()
-            print(f"[{step}] eval score={stats['mean_score']:.1f} clears={stats['mean_clears']:.2f}")
+            print(
+                f"[{step}] eval score={stats['mean_score']:.1f} clears={stats['mean_clears']:.2f}"
+            )
 
         if step % cfg["checkpoint_every"] == 0:
             torch.save(agent.online.state_dict(), run_dir / f"online_{step}.pt")
 
     torch.save(agent.online.state_dict(), run_dir / "online_final.pt")
-    csv_file.close(); writer.close()
+    csv_file.close()
+    writer.close()
 
 
 if __name__ == "__main__":

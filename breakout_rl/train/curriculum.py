@@ -1,7 +1,7 @@
 from typing import Tuple
 
 STAGE1 = (120.0, 200.0)  # (paddle_width, ball_speed) — easy
-STAGE2 = (80.0, 300.0)   # real difficulty
+STAGE2 = (80.0, 300.0)  # real difficulty
 
 
 def curriculum_params(step: int, switch_step: int) -> Tuple[float, float]:

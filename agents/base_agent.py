@@ -9,7 +9,10 @@ from typing import Any, Dict, Optional
 
 import websockets
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - AGENT - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - AGENT - %(levelname)s - %(message)s"
+)
+
 
 class BaseAgent:
     def __init__(self, server_uri: str = "ws://localhost:8765/ws") -> None:

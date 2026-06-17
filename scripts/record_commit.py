@@ -1,4 +1,7 @@
-import subprocess, glob, yaml
+import subprocess
+import glob
+import yaml
+
 h = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
 for path in glob.glob("breakout_rl/configs/*.yaml"):
     c = yaml.safe_load(open(path))

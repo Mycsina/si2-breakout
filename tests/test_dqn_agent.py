@@ -15,11 +15,16 @@ def test_update_runs_and_returns_finite_loss():
     agent = DQNAgent(obs_dim=4, n_actions=3, device="cpu")
     buf = PrioritizedReplay(capacity=128)
     for i in range(128):
-        buf.add(Transition(
-            state=np.random.randn(4).astype(np.float32), action=i % 3,
-            reward=1.0, next_state=np.random.randn(4).astype(np.float32),
-            done=False, gamma=0.99,
-        ))
+        buf.add(
+            Transition(
+                state=np.random.randn(4).astype(np.float32),
+                action=i % 3,
+                reward=1.0,
+                next_state=np.random.randn(4).astype(np.float32),
+                done=False,
+                gamma=0.99,
+            )
+        )
     loss = agent.update(buf, batch_size=32, beta=0.4)
     assert np.isfinite(loss)
 

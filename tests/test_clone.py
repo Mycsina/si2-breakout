@@ -1,6 +1,7 @@
 from server.logic import Breakout
 from breakout_rl.physics.clone import clone_game
 
+
 def test_clone_is_independent_and_equal():
     g = Breakout()
     g.ball_x, g.ball_y, g.ball_vx, g.ball_vy = 123.0, 200.0, 50.0, 100.0
@@ -20,6 +21,7 @@ def test_clone_is_independent_and_equal():
     c.bricks[1].active = False
     assert g.ball_x == 123.0
     assert g.bricks[1].active is True
+
 
 def test_clone_preserves_curriculum_overrides():
     g = Breakout()

@@ -98,8 +98,12 @@ class BreakoutEnv(gym.Env):
             # (it's cheap) and whenever the descent (re)starts or a brick changes -> stays
             # bit-exact with per-step prediction.
             near_paddle = self.game.ball_y + self.game.ball_radius >= self.game.paddle_y
-            if (self._cached_landing is None or bricks_now != self._bricks_at_cache
-                    or self._last_vy <= 0 or near_paddle):
+            if (
+                self._cached_landing is None
+                or bricks_now != self._bricks_at_cache
+                or self._last_vy <= 0
+                or near_paddle
+            ):
                 self._cached_landing = predict_landing(self.game)
                 self._bricks_at_cache = bricks_now
         self._last_vy = self.game.ball_vy
@@ -111,6 +115,9 @@ class BreakoutEnv(gym.Env):
         self.steps += 1
         truncated = self.steps >= self.max_steps
         obs = self._build_obs(after)
-        info = {"score": self.game.score, "lives": self.game.lives,
-                "bricks_left": int(self.game.brick_array[:, 4].sum())}
+        info = {
+            "score": self.game.score,
+            "lives": self.game.lives,
+            "bricks_left": int(self.game.brick_array[:, 4].sum()),
+        }
         return obs, float(reward), terminated, truncated, info

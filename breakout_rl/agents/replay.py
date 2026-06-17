@@ -37,7 +37,9 @@ class PrioritizedReplay:
         self.priorities[self.pos] = max_p  # new samples get max priority
         self.pos = (self.pos + 1) % self.capacity
 
-    def sample(self, batch_size: int, beta: float) -> Tuple[List[Transition], np.ndarray, np.ndarray]:
+    def sample(
+        self, batch_size: int, beta: float
+    ) -> Tuple[List[Transition], np.ndarray, np.ndarray]:
         n = len(self.data)
         prios = self.priorities[:n] ** self.alpha
         probs = prios / prios.sum()

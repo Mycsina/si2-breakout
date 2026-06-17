@@ -5,6 +5,7 @@
     the one that breaks the most bricks over the next volley (upper bound on aiming).
 Report mean clears / bricks-per-life. If oracle >> center on clearing metrics, build
 the full SMDP hierarchy (M4). If the gap is small, pivot to implicit reward shaping."""
+
 import argparse
 import random
 import numpy as np
@@ -12,8 +13,15 @@ import numpy as np
 from server.logic import Breakout
 from breakout_rl.physics.clone import clone_game
 from breakout_rl.controllers.aim_controller import choose_action
-from breakout_rl.constants import (DT, ACTION_WEST, ACTION_EAST,
-                                   REGION_LEFT, REGION_CENTER, REGION_RIGHT, DECISION_LINE_Y)
+from breakout_rl.constants import (
+    DT,
+    ACTION_WEST,
+    ACTION_EAST,
+    REGION_LEFT,
+    REGION_CENTER,
+    REGION_RIGHT,
+    DECISION_LINE_Y,
+)
 
 REGIONS = [REGION_LEFT, REGION_CENTER, REGION_RIGHT]
 
@@ -25,7 +33,9 @@ def _apply(g: Breakout, action: int) -> None:
         g.move_paddle("EAST")
 
 
-def _simulate_volley_break_count(game: Breakout, region: int, max_steps: int = 800) -> int:
+def _simulate_volley_break_count(
+    game: Breakout, region: int, max_steps: int = 800
+) -> int:
     """Bricks broken if we commit to `region` for the upcoming volley, simulated on a
     clone until the next decision point / life loss / game over."""
     g = clone_game(game)
@@ -59,7 +69,8 @@ def _best_region(game: Breakout) -> int:
 def run_policy(kind: str, episodes: int, seed: int, max_steps: int = 4000) -> dict:
     clears, bricks = [], []
     for ep in range(episodes):
-        random.seed(seed + ep); np.random.seed(seed + ep)
+        random.seed(seed + ep)
+        np.random.seed(seed + ep)
         g = Breakout()
         prev = int(g.brick_array[:, 4].sum())
         broken = 0
@@ -80,13 +91,15 @@ def run_policy(kind: str, episodes: int, seed: int, max_steps: int = 4000) -> di
             g.update(DT)
             now = int(g.brick_array[:, 4].sum())
             if now < prev:
-                broken += (prev - now)
+                broken += prev - now
             prev = now
             steps += 1
         clears.append(broken // 16)
         bricks.append(broken / 3.0)
-    return {"mean_clears": float(np.mean(clears)),
-            "mean_bricks_per_life": float(np.mean(bricks))}
+    return {
+        "mean_clears": float(np.mean(clears)),
+        "mean_bricks_per_life": float(np.mean(bricks)),
+    }
 
 
 if __name__ == "__main__":
@@ -96,5 +109,7 @@ if __name__ == "__main__":
     args = p.parse_args()
     for kind in ["center", "random_region", "oracle_region"]:
         stats = run_policy(kind, args.episodes, args.seed)
-        print(f"{kind:16s} clears={stats['mean_clears']:.2f} "
-              f"bricks/life={stats['mean_bricks_per_life']:.2f}")
+        print(
+            f"{kind:16s} clears={stats['mean_clears']:.2f} "
+            f"bricks/life={stats['mean_bricks_per_life']:.2f}"
+        )

@@ -4,8 +4,12 @@ from breakout_rl.agents.replay import PrioritizedReplay, Transition
 
 def _t(i):
     return Transition(
-        state=np.zeros(4, np.float32), action=0, reward=float(i),
-        next_state=np.zeros(4, np.float32), done=False, gamma=0.99,
+        state=np.zeros(4, np.float32),
+        action=0,
+        reward=float(i),
+        next_state=np.zeros(4, np.float32),
+        done=False,
+        gamma=0.99,
     )
 
 

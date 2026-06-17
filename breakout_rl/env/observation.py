@@ -42,13 +42,16 @@ class ObservationBuilder:
                 occ[idx] = 1.0
 
         paddle_range = max(w - pw, 1.0)
-        scalars = np.array([
-            px / paddle_range,
-            bx / w,
-            by / h,
-            vx,
-            vy,
-            float(state["lives"]) / 3.0,
-            float(occ.sum()) / NUM_BRICKS,
-        ], dtype=np.float32)
+        scalars = np.array(
+            [
+                px / paddle_range,
+                bx / w,
+                by / h,
+                vx,
+                vy,
+                float(state["lives"]) / 3.0,
+                float(occ.sum()) / NUM_BRICKS,
+            ],
+            dtype=np.float32,
+        )
         return np.concatenate([scalars, occ]).astype(np.float32)

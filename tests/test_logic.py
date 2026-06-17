@@ -7,6 +7,7 @@ import unittest
 import math
 from server.logic import Breakout
 
+
 class TestBreakoutLogic(unittest.TestCase):
     def setUp(self):
         self.game = Breakout(width=600, height=400)
@@ -60,7 +61,7 @@ class TestBreakoutLogic(unittest.TestCase):
         self.game.paddle_y = 380.0
         self.game.paddle_width = 80.0
         self.game.paddle_height = 10.0
-        
+
         self.game.ball_x = 140.0
         self.game.ball_y = 373.0
         self.game.ball_vx = 0.0
@@ -69,14 +70,14 @@ class TestBreakoutLogic(unittest.TestCase):
 
         # Updates position: ball_y becomes 373 + 5 = 378 (overlaps paddle top at 380)
         self.game.update(0.05)
-        
+
         # Velocity vy must reverse
         self.assertLess(self.game.ball_vy, 0.0)
-        
+
         # Magnitude velocity must strictly equal ball_speed
         speed = math.sqrt(self.game.ball_vx**2 + self.game.ball_vy**2)
         self.assertAlmostEqual(speed, 300.0, places=2)
-        
+
         # Position is snapped to paddle top
         self.assertEqual(self.game.ball_y, 372.0)
 
@@ -105,7 +106,7 @@ class TestBreakoutLogic(unittest.TestCase):
         self.game.checkpoint_score = 50
         self.game.score = 75
         self.game.lives = 3
-        
+
         # Position ball at bottom of screen
         self.game.ball_y = 395.0
         self.game.ball_vy = 100.0
@@ -152,7 +153,9 @@ class TestBreakoutLogic(unittest.TestCase):
     def test_paddle_bounce_regions(self):
         self.game.paddle_x = 100.0
         self.game.paddle_y = 380.0
-        self.game.paddle_width = 90.0  # clean division by 3: Left 0-30, Center 30-60, Right 60-90
+        self.game.paddle_width = (
+            90.0  # clean division by 3: Left 0-30, Center 30-60, Right 60-90
+        )
         self.game.paddle_height = 10.0
         self.game.ball_speed = 300.0
 

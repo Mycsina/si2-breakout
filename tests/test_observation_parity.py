@@ -16,7 +16,8 @@ def test_env_path_and_deploy_path_produce_identical_vectors():
 
     env_builder = ObservationBuilder()
     deploy_builder = ObservationBuilder()
-    env_builder.build(s1, DT); deploy_builder.build(s1, DT)
+    env_builder.build(s1, DT)
+    deploy_builder.build(s1, DT)
     v_env = env_builder.build(s2, DT)
     v_deploy = deploy_builder.build(s2, DT)
 
