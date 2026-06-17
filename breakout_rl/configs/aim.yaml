@@ -21,6 +21,7 @@ reward:
   life_loss_penalty: -30.0
   score_scale: 1.0
   step_cost: -0.01
+  waste_penalty: -2.0
 run_id: aim_smdp
 seed: 0
 target_sync_every: 1000

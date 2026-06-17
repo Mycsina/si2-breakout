@@ -8,6 +8,11 @@ class RewardConfig:
     life_loss_penalty: float = -30.0
     game_over_penalty: float = -50.0
     step_cost: float = -0.01
+    # SMDP-only: penalty applied once to an option (volley) that breaks zero bricks.
+    # Discourages the corner-ricochet "setup" volleys that reposition the ball without
+    # making progress, pushing the high-level policy to aim productively every volley.
+    # Default 0.0 leaves the flat env (which never applies it) unchanged.
+    waste_penalty: float = 0.0
 
 
 def base_reward(before: dict, after: dict, cfg: RewardConfig) -> float:
@@ -25,7 +30,9 @@ def base_reward(before: dict, after: dict, cfg: RewardConfig) -> float:
     return r
 
 
-def potential(state: dict, predicted_landing_x: Optional[float], is_terminal: bool) -> float:
+def potential(
+    state: dict, predicted_landing_x: Optional[float], is_terminal: bool
+) -> float:
     """PBRS potential. MUST be a pure function of state, and MUST be 0 on terminal
     states for policy invariance. `predicted_landing_x` is None when ascending (the
     predictor returns None), which yields potential 0 -> a valid state function."""

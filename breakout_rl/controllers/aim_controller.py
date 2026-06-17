@@ -2,11 +2,34 @@ from typing import Optional
 
 from server.logic import Breakout
 from breakout_rl.physics.predictor import predict_landing
-from breakout_rl.constants import (REGION_LEFT, REGION_CENTER, REGION_RIGHT,
-                                   ACTION_NOOP, ACTION_WEST, ACTION_EAST)
+from breakout_rl.constants import (
+    REGION_LEFT,
+    REGION_CENTER,
+    REGION_RIGHT,
+    ACTION_NOOP,
+    ACTION_WEST,
+    ACTION_EAST,
+)
 
 _REGION_FRAC = {REGION_LEFT: 1.0 / 6.0, REGION_CENTER: 0.5, REGION_RIGHT: 5.0 / 6.0}
 _HALF_STEP = 12.5  # half of the 25px paddle step
+
+
+def brick_mass_offset(game: Breakout) -> float:
+    """Signed horizontal offset of the surviving-brick centroid from the ball, normalized
+    by board width. >0 means most remaining bricks are to the RIGHT of the ball (so aim
+    right), <0 to the left, ~0 when balanced or none left. This is the 'which way are the
+    bricks' signal the high-level policy needs to aim proactively in the endgame, instead
+    of relying on corner-ricochet setups. Computed identically in training and deploy."""
+    arr = game.brick_array
+    if arr.shape[0] == 0:
+        return 0.0
+    active = arr[:, 4] == 1.0
+    if not active.any():
+        return 0.0
+    centers_x = (arr[active, 0] + arr[active, 2]) * 0.5
+    centroid = float(centers_x.mean())
+    return float((centroid - game.ball_x) / game.width)
 
 
 def target_paddle_x(game: Breakout, region: int) -> Optional[float]:

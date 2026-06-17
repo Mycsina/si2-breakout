@@ -1,4 +1,6 @@
-import argparse, asyncio, time
+import argparse
+import asyncio
+import time
 from typing import Optional, Dict, Any
 import numpy as np
 import torch
@@ -6,15 +8,15 @@ import torch
 from agents.base_agent import BaseAgent
 from breakout_rl.agents.networks import DuelingMLP
 from breakout_rl.env.observation import ObservationBuilder, OBS_DIM
-from breakout_rl.physics.predictor import predict_landing
-from breakout_rl.controllers.aim_controller import choose_action
-from breakout_rl.physics.clone import clone_game
+from breakout_rl.env.high_level_env import HIGH_OBS_DIM
+from breakout_rl.controllers.aim_controller import choose_action, brick_mass_offset
 from server.logic import Breakout
-from breakout_rl.constants import (ACTIONS, ACTION_NOOP, ACTION_WEST, ACTION_EAST,
-                                   DECISION_LINE_Y)
+from breakout_rl.constants import ACTION_WEST, ACTION_EAST, DECISION_LINE_Y
 
-_ACTION_MSG = {ACTION_WEST: {"action": "move", "direction": "WEST"},
-               ACTION_EAST: {"action": "move", "direction": "EAST"}}
+_ACTION_MSG = {
+    ACTION_WEST: {"action": "move", "direction": "WEST"},
+    ACTION_EAST: {"action": "move", "direction": "EAST"},
+}
 
 
 def _load(net_path: str, in_dim: int, hidden: int = 128) -> DuelingMLP:
@@ -50,8 +52,11 @@ def _mirror_from_state(st: Dict[str, Any]) -> Breakout:
     not available here; instead we reconstruct vx/vy from two successive states in the
     hierarchical agent (see below)."""
     g = Breakout(width=int(st["width"]), height=int(st["height"]))
-    g.paddle_width = st["paddle_width"]; g.paddle_x = st["paddle_x"]
-    g.ball_radius = st["ball_radius"]; g.ball_x = st["ball_x"]; g.ball_y = st["ball_y"]
+    g.paddle_width = st["paddle_width"]
+    g.paddle_x = st["paddle_x"]
+    g.ball_radius = st["ball_radius"]
+    g.ball_x = st["ball_x"]
+    g.ball_y = st["ball_y"]
     active_idx = {b["index"] for b in st.get("bricks", [])}
     for b in g.bricks:
         b.active = b.index in active_idx
@@ -62,7 +67,7 @@ def _mirror_from_state(st: Dict[str, Any]) -> Breakout:
 class HierarchicalAgent(BaseAgent):
     def __init__(self, net_path: str, **kw):
         super().__init__(**kw)
-        self.net = _load(net_path, OBS_DIM)
+        self.net = _load(net_path, HIGH_OBS_DIM)
         self.obs_builder = ObservationBuilder()
         self._prev: Optional[Dict[str, Any]] = None
         self._prev_t: Optional[float] = None
@@ -86,9 +91,13 @@ class HierarchicalAgent(BaseAgent):
 
         # new high-level decision at a clean descent decision point
         if g.ball_y > DECISION_LINE_Y and vy > 0 and self._prev_vy <= 0:
+            # match the training observation: shared 23-dim + brick-centroid offset
             obs = self.obs_builder.build(st, dt)
+            obs = np.concatenate([obs, [brick_mass_offset(g)]]).astype(np.float32)
             with torch.no_grad():
-                self._region = int(self.net(torch.as_tensor(obs).unsqueeze(0)).argmax(1).item())
+                self._region = int(
+                    self.net(torch.as_tensor(obs).unsqueeze(0)).argmax(1).item()
+                )
         else:
             self.obs_builder.build(st, dt)  # keep history warm
 

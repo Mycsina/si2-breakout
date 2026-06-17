@@ -172,6 +172,13 @@ Two stages (`breakout_rl/train/curriculum.py`): Stage 1 is *easy* (paddle width 
 speed 200) to bootstrap; Stage 2 switches to the *real* difficulty (width 80, speed 300)
 and runs long enough that the final evaluation reflects real conditions.
 
+For the SMDP agent there is a subtlety: difficulty parameters are applied only on
+`env.reset()`, but the aim controller almost never drops the ball, so games would otherwise
+never end and the env would stay frozen on stage-1 settings forever. We therefore cap each
+episode at `max_episode_steps` *primitive* steps (`aim.yaml`), forcing a reset so the stage-2
+parameters actually take effect past the switch — visible as the step up in the SMDP curve
+at option 20k (§9).
+
 ## 7. Evaluation metrics and the M3 aiming-authority gate
 
 Plain survival/score **saturate** and fail to discriminate good agents, so we report
@@ -230,13 +237,58 @@ From `breakout_rl/configs/flat_dqn.yaml` (flat) and `aim.yaml` (SMDP):
 
 ## 9. Training curves and final comparison
 
-> **To be populated from a full GPU training run.** The code, configs, and plotting/eval
-> scripts are complete and the pipeline is validated end-to-end (a 2.5k-step smoke run
-> trains, evaluates, and checkpoints without error). The 400k-step flat-DQN run and the
-> 60k-option SMDP run require a GPU and a few hours; run the commands in §2, then paste:
-> - `docs/curves_flat_dqn.png` (training curves from `plot_curves.py`),
-> - the multi-seed comparison table printed by `evaluate.py` (and `checkpoints/comparison.csv`),
-> - a one-line note on the deploy visual check (paddle tracks ball, score climbs).
+Full runs on an RTX 3080 Laptop GPU: the **flat DQN for 400k steps** and the **SMDP aim
+policy for 60k options** (the latter ≈13.5 min). Both training and held-out evaluation
+seed everything; evaluation uses held-out seeds (`10_000 + step`).
+
+### Learning curves
+
+![flat DQN learning curve](docs/curves_flat_dqn.png)
+![SMDP aim learning curve](docs/curves_aim_smdp.png)
+
+- **Flat DQN** (`docs/curves_flat_dqn.png`, eval *score* vs. step): essentially flat at ~0
+  for the first ~200k steps — the reactive policy needs a lot of experience before it
+  reliably intercepts and scores under the real difficulty — then a **noisy** climb
+  (13.2 at 220k, peak **22.1 at 360k**, 11.05 at 400k). The large step-to-step swings are
+  characteristic of a high-variance reactive value function.
+- **SMDP aim** (`docs/curves_aim_smdp.png`, eval *board-clears* vs. option): a clean,
+  low-variance rise — **2.60 → 2.80 → 2.45** (stage 1) then a step up at the **curriculum
+  switch (option 20k)** to **2.90 → 3.20**, plateauing around **3.2** (peak **3.25 at
+  50k**). Far fewer samples than the flat agent for a stronger policy, because each SMDP
+  backup credits a whole volley.
+
+| eval @ option | 5k | 10k | 15k | 20k | 25k | 30k | 40k | 50k | 60k |
+|---|---|---|---|---|---|---|---|---|---|
+| board-clears | 2.60 | 2.80 | 2.45 | 2.90 | 3.20 | 2.95 | 3.10 | **3.25** | 3.20 |
+
+### Final comparison (held-out, 30 episodes × 3 seeds, equal 4000-primitive-step budget)
+
+Both agents are scored over the **same primitive-step budget** so the hierarchy's longer
+options don't give it extra game time (`evaluate_hierarchical` accumulates `info["k"]`).
+
+| agent | clears (mean±std) | bricks/life | score |
+|---|---|---|---|
+| random | 0.00 ± 0.00 | 1.69 | 0.0 |
+| flat DQN | 2.36 ± 0.36 | 4.19 | 21.4 |
+| **hierarchical (SMDP)** | **3.21 ± 0.02** | **19.79** | **553.6** |
+
+**Findings.** The hierarchical agent **dominates** on every metric: **+36%** board-clears,
+**4.7× the bricks-per-life**, and **~26× the game score** of the flat DQN — at **near-zero
+variance** (±0.02 clears vs. ±0.36), because the physics aim controller intercepts the ball
+almost deterministically while the learned high-level policy decides *where to send it*.
+The flat agent's low score (21.4) reflects that it loses its lives quickly; the hierarchical
+agent survives the full step budget and keeps breaking bricks (≈59 bricks + board-clear
+bonuses → 553.6). This matches the §7 gate prediction: the win comes from **board-aware,
+multi-step credit assignment**, not from per-volley aiming precision.
+
+*(Raw numbers in `checkpoints/comparison.csv`. The hierarchical `score` is now reported by
+`evaluate_hierarchical`; earlier it defaulted to 0.0 because that metric was not populated.)*
+
+**Deploy check.** The deploy adapter (`breakout_rl/deploy/trained_agent.py`) shares the
+exact observation builder used in training (guarded by `tests/test_observation_parity.py`,
+so the wire and training observations match bit-for-bit) and loads either checkpoint to act
+against the live WebSocket server via the §2 commands — paddle tracks the ball and the score
+climbs in the browser viewer.
 
 ## 10. Reproducibility
 
