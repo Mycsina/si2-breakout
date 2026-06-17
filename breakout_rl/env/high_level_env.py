@@ -26,6 +26,14 @@ from breakout_rl.constants import (
 HIGH_OBS_DIM = OBS_DIM + 1
 
 
+def crossed_decision_line(prev_ball_y: float, ball_y: float, ball_vy: float) -> bool:
+    """A high-level decision point: the ball crosses the decision line downward, entering
+    the clean descent toward the paddle (committing to a contact region only matters here).
+    Shared by HighLevelEnv (training/eval) and the deploy agent so the two trigger on the
+    exact same event and can never silently diverge."""
+    return prev_ball_y <= DECISION_LINE_Y < ball_y and ball_vy > 0
+
+
 class HighLevelEnv(gym.Env):
     """Semi-Markov (options) wrapper. The high level picks a contact region at each
     decision point (clean descent below the brick field); the low-level aim controller
@@ -84,11 +92,7 @@ class HighLevelEnv(gym.Env):
         return base_reward(before, after, self.reward_cfg)
 
     def _at_decision_point(self, prev_ball_y: float) -> bool:
-        # decision point = ball crosses the decision line downward, entering the clean
-        # descent toward the paddle (this is when committing to a contact region matters).
-        return (
-            prev_ball_y <= DECISION_LINE_Y < self.game.ball_y and self.game.ball_vy > 0
-        )
+        return crossed_decision_line(prev_ball_y, self.game.ball_y, self.game.ball_vy)
 
     def _advance_to_decision_point(self, region: Optional[int]):
         """Advance with the controller until a new decision point / terminal / life loss.

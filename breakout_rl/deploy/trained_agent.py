@@ -8,10 +8,10 @@ import torch
 from agents.base_agent import BaseAgent
 from breakout_rl.agents.networks import DuelingMLP
 from breakout_rl.env.observation import ObservationBuilder, OBS_DIM
-from breakout_rl.env.high_level_env import HIGH_OBS_DIM
+from breakout_rl.env.high_level_env import HIGH_OBS_DIM, crossed_decision_line
 from breakout_rl.controllers.aim_controller import choose_action, brick_mass_offset
 from server.logic import Breakout
-from breakout_rl.constants import ACTION_WEST, ACTION_EAST, DECISION_LINE_Y
+from breakout_rl.constants import ACTION_WEST, ACTION_EAST
 
 _ACTION_MSG = {
     ACTION_WEST: {"action": "move", "direction": "WEST"},
@@ -71,8 +71,7 @@ class HierarchicalAgent(BaseAgent):
         self.obs_builder = ObservationBuilder()
         self._prev: Optional[Dict[str, Any]] = None
         self._prev_t: Optional[float] = None
-        self._region = 1  # default CENTER
-        self._prev_vy = 0.0
+        self._region = 1  # default CENTER (used only before the first decision point)
 
     async def deliberate(self) -> Optional[Dict[str, Any]]:
         st = self.current_state
@@ -89,8 +88,14 @@ class HierarchicalAgent(BaseAgent):
         g = _mirror_from_state(st)
         g.ball_vx, g.ball_vy = vx, vy
 
-        # new high-level decision at a clean descent decision point
-        if g.ball_y > DECISION_LINE_Y and vy > 0 and self._prev_vy <= 0:
+        # New high-level decision at the SAME point training uses (HighLevelEnv
+        # ._at_decision_point): the ball crossing the decision line downward. The old
+        # apex-below-line detector never fired in deploy -- any brick-reaching volley
+        # apexes above the line -- so the region stayed frozen and the policy was never
+        # consulted. A position crossing also avoids depending on the noisy finite-diff
+        # velocity (it is positive by construction at a downward crossing).
+        prev_ball_y = self._prev["ball_y"] if self._prev is not None else g.ball_y
+        if crossed_decision_line(prev_ball_y, g.ball_y, vy):
             # match the training observation: shared 23-dim + brick-centroid offset
             obs = self.obs_builder.build(st, dt)
             obs = np.concatenate([obs, [brick_mass_offset(g)]]).astype(np.float32)
@@ -101,7 +106,7 @@ class HierarchicalAgent(BaseAgent):
         else:
             self.obs_builder.build(st, dt)  # keep history warm
 
-        self._prev, self._prev_t, self._prev_vy = st, now, vy
+        self._prev, self._prev_t = st, now
         a = choose_action(g, self._region)
         return _ACTION_MSG.get(a)
 
