@@ -223,4 +223,5 @@ __marimo__/
 # RL training artifacts (final checkpoints are force-added in their tasks)
 checkpoints/**/tb/
 checkpoints/**/online_[0-9]*.pt
+checkpoints/**/online_best.pt
 breakout_rl/configs/_*.yaml

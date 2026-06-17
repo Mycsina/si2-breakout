@@ -1,4 +1,5 @@
 import argparse
+import copy
 import csv
 import random
 from pathlib import Path
@@ -12,6 +13,7 @@ from breakout_rl.env.rewards import RewardConfig
 from breakout_rl.agents.dqn_agent import DQNAgent
 from breakout_rl.agents.replay import PrioritizedReplay, Transition
 from breakout_rl.train.curriculum import curriculum_params
+from breakout_rl.train.early_stop import EarlyStopper
 from breakout_rl.eval.metrics import evaluate_hierarchical
 
 
@@ -46,6 +48,14 @@ def main(cfg_path: str) -> None:
     obs, _ = env.reset(seed=seed)
     last_loss = 0.0
     ep_steps = 0
+
+    stopper = EarlyStopper(
+        patience=cfg.get("early_stop_patience", 10),
+        min_delta=cfg.get("early_stop_min_delta", 0.02),
+        warmup_options=cfg.get("early_stop_warmup_options", 40000),
+    )
+    best_state = None
+    stopped_at = cfg["total_options"]
 
     for opt in range(1, cfg["total_options"] + 1):
         pw, bs = curriculum_params(opt, cfg["curriculum_switch_option"])
@@ -90,13 +100,40 @@ def main(cfg_path: str) -> None:
             )
             cw.writerow([opt, "", "", last_loss, eps, stats["mean_clears"]])
             csv_file.flush()
+            # Convergence metric: clears (coarse) + bricks/life as a fine-grained
+            # tie-breaker, so noisy equal-clear evals don't all look identical.
+            metric = stats["mean_clears"] + 0.01 * stats["mean_bricks_per_life"]
+            is_best, should_stop = stopper.update(metric, opt)
+            if is_best:
+                best_state = copy.deepcopy(agent.online.state_dict())
+                torch.save(
+                    best_state, run_dir / "online_best.pt"
+                )  # gitignored crash net
             print(
-                f"[{opt}] eval clears={stats['mean_clears']:.2f} bpl={stats['mean_bricks_per_life']:.2f}"
+                f"[{opt}] eval clears={stats['mean_clears']:.2f} "
+                f"bpl={stats['mean_bricks_per_life']:.2f} "
+                f"metric={metric:.3f} best={stopper.best:.3f} "
+                f"stale={stopper.evals_since_best}/{stopper.patience}"
             )
+            if should_stop:
+                print(
+                    f"[{opt}] EARLY STOP: metric plateaued "
+                    f"(best={stopper.best:.3f}, no gain > {stopper.min_delta} "
+                    f"for {stopper.patience} evals)"
+                )
+                stopped_at = opt
+                break
         if opt % cfg["checkpoint_every"] == 0:
             torch.save(agent.online.state_dict(), run_dir / f"online_{opt}.pt")
 
-    torch.save(agent.online.state_dict(), run_dir / "online_final.pt")
+    # Keep the BEST-eval policy as the final checkpoint (RL eval is noisy; the last
+    # policy is not always the best). Fall back to current weights if no eval ran.
+    final_state = best_state if best_state is not None else agent.online.state_dict()
+    torch.save(final_state, run_dir / "online_final.pt")
+    print(
+        f"done: stopped at option {stopped_at}/{cfg['total_options']}, "
+        f"best metric={stopper.best:.3f} -> online_final.pt"
+    )
     csv_file.close()
     writer.close()
 
