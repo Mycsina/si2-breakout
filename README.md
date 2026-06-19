@@ -2,6 +2,12 @@
 
 A Breakout game implementation using the `ai-game-framework`.
 
+> **SI2 evaluation — start here.** Our autonomous RL agent and its full report are in
+> **[Reinforcement Learning Agent — Project Report](#reinforcement-learning-agent--project-report-si2)**
+> below. To **watch the trained agent play in three commands** (no training needed — a
+> trained checkpoint ships in the repo), jump straight to
+> **[Quick start: watch the trained agent](#quick-start-watch-the-trained-agent)**.
+
 ## Features
 - Real-time backend server.
 - Web-based viewer with Canvas API.
@@ -65,6 +71,43 @@ This section is the project report. It documents the autonomous Breakout agent(s
 we built, the architecture, the state/model/reward design, how to run everything,
 and the experimental findings.
 
+## Quick start: watch the trained agent
+
+**Three commands to see our showpiece agent (the hierarchical SMDP policy) play live.**
+A trained checkpoint is committed to the repo, so **no training is required** — `uv sync`
+installs both the game server and the RL stack, and `uv` fetches the right Python itself.
+
+```bash
+# 1. One-time setup: create .venv and install everything (server + RL deps)
+uv sync
+
+# 2. Terminal 1 — start the game server and web viewer
+.venv/bin/python -m server.server
+
+# 3. Terminal 2 — run our trained hierarchical agent against it
+.venv/bin/python -m breakout_rl.deploy.trained_agent \
+    --mode hier --checkpoint checkpoints/aim_smdp/online_final.pt
+```
+
+Then open **<http://localhost:8765/>** in a browser to watch it play.
+
+Other shipped checkpoints (same `server.server` running in terminal 1):
+
+```bash
+# Flat (reactive) DQN baseline
+.venv/bin/python -m breakout_rl.deploy.trained_agent \
+    --mode flat --checkpoint checkpoints/flat_dqn/online_final.pt
+
+# Distributional QR-DQN high level (loads via the same hierarchical adapter)
+.venv/bin/python -m breakout_rl.deploy.trained_agent \
+    --mode hier --checkpoint checkpoints/aim_smdp_qr/online_final.pt
+```
+
+> No `uv`? Install with pip instead — `python3 -m venv .venv && .venv/bin/pip install -r
+> requirements.txt -r requirements-rl.txt` (needs Python ≥ 3.14) — then use the same
+> `.venv/bin/python …` commands above. The full command reference (training, evaluation,
+> plots) is in [§2](#2-how-to-run).
+
 ## 1. What we built
 
 Two agents that share one codebase (`breakout_rl/`):
@@ -86,6 +129,10 @@ lookahead) that serves as a model-based reference point for the learned policies
 
 ## 2. How to run
 
+**Just want to watch the agent play? See [Quick start](#quick-start-watch-the-trained-agent)
+above — three commands against the shipped checkpoints, no training.** This section is the
+full command reference for *reproducing the experiments* (training, evaluation, plots).
+
 This project uses [`uv`](https://docs.astral.sh/uv/). The Python environment (incl.
 `torch`, `gymnasium`, `tensorboard`, `pytest`) is declared in `pyproject.toml` /
 `uv.lock`. A `requirements-rl.txt` mirrors the dependency list for pip users.
@@ -95,8 +142,9 @@ uv sync                                   # create .venv and install everything
 .venv/bin/python -m pytest -q             # run the test suite (64 tests)
 ```
 
-All commands below assume `.venv/bin/python` (no activation needed). On a GPU box the
-flat-DQN trainer uses CUDA automatically if available; otherwise it runs on CPU.
+All commands below assume `.venv/bin/python` (no activation needed). Training the SMDP
+policy to convergence takes ~30 min on an RTX 3080-class GPU; the trainer uses CUDA
+automatically if available, otherwise it runs (slower) on CPU.
 
 ```bash
 # --- Train the reactive flat DQN (writes checkpoints/flat_dqn/) ---
@@ -413,61 +461,90 @@ agent re-chooses a region on every descent and plays as the table predicts.
 
 ## 11. Upstream contribution — PR: fix brick-collision resolution
 
-A reviewing pass over `server/logic.py` found a real collision bug. Below is the proposed
+A reviewing pass over `server/logic.py` — backed by two glitches we then saw live in the
+viewer — found a real collision bug with two compounding causes. Below is the proposed
 pull request to `mariolpantunes/si2-breakout` (verified locally; **not** applied to the
 branch used for the reported experiments — see the caveat at the end).
 
-**Title:** `fix: resolve all overlapped bricks and prevent corner-graze tunnelling`
+**Title:** `fix: robust brick-collision resolution (resolve every overlap + face-aware reflection)`
 
 ### Symptom
-When the ball overlaps **two bricks in the same physics frame** — e.g. straddling the
-10 px gap between two bricks in a row — only one brick is removed and, in a reproducible
-case, **the ball passes straight through the second brick without breaking it or
-bouncing**.
+Two related glitches, both observed live in the viewer:
 
-### Root cause (`server/logic.py`, the brick-collision block, ~lines 202–226)
+1. **Two bricks, one removed.** When the ball overlaps **two bricks in the same physics
+   frame** — e.g. straddling the ~10 px gap between two bricks in a row — only one is
+   removed and, in a reproducible case, the ball **passes straight through the second**
+   without breaking it or bouncing.
+2. **Wrong-axis reflection / row tunnelling.** A ball **rising from below** strikes a
+   brick but rebounds off a *vertical* (left/right) face — `vx` flips while `vy` is left
+   unchanged — so it keeps moving up, breaks the brick, and **continues into the brick one
+   row above** instead of bouncing back down.
+
+### Root cause (`server/logic.py`, the brick-collision block of `update()`)
 Two issues compound:
 
 1. **First-in-array resolution.** The hit brick is chosen as `np.where(overlap)[0][0]` —
-   the *lowest index*, not the brick actually being contacted — and only that single
-   brick is deactivated. A genuinely-overlapped neighbour survives the frame.
+   the *lowest index*, not the brick actually being contacted — and only that single brick
+   is deactivated, so a genuinely-overlapped neighbour survives the frame (symptom 1).
 2. **Penetration-only axis selection.** The reflection axis is picked purely by
-   `overlap_x < overlap_y`. On a corner graze the horizontal overlap can be a few pixels
-   while the ball is travelling almost purely vertically (`ball_vx ≈ 0`). The code then
-   flips `vx` (a no-op when `vx == 0`) and leaves `vy` untouched, so the ball continues
-   upward through the surviving neighbour — a tunnelling artifact.
+   `overlap_x < overlap_y` on the *post-move* position. After one discrete step a fast or
+   angled ball can sit deeper on the wrong axis than the face it actually crossed: a ball
+   rising from below a brick, slightly off-centre, ends the frame with a small horizontal
+   overlap and a larger vertical one, so the code flips `vx` and leaves `vy` negative — the
+   ball tunnels up into the next row (symptom 2). Penetration depth alone does not encode
+   *which face the ball came through*. (A naive `and ball_vx != 0` guard does **not** fix
+   this — the offending ball has `vx ≠ 0`; the axis choice itself is wrong.)
 
 ### Reproduction (deterministic; uses no RNG)
 ```python
 from server.logic import Breakout
+
+# (1) two-brick straddle — ball straight up in the gap overlaps bricks 0 and 1
 g = Breakout()
 for b in g.bricks:
-    b.active = (b.index in (0, 1))   # keep only row-1 bricks 0 (105–175) and 1 (185–255)
+    b.active = (b.index in (0, 1))   # row-1 bricks 0 (105–175) and 1 (185–255)
 g._sync_bricks_to_numpy()
-# ball centred in the 10px gap (x=180 spans 172–188 -> overlaps both), moving straight up
 g.ball_x, g.ball_y, g.ball_vx, g.ball_vy = 180.0, 83.0, 0.0, -100.0
 g.update(0.05)
 print(g.bricks[0].active, g.bricks[1].active, g.ball_vy)
 # BEFORE FIX: False  True  -100.0   <- brick 1 survives, ball keeps going up (tunnels)
 # AFTER  FIX: False  False +100.0   <- both break, ball bounces down
+
+# (2) wrong-axis reflection — ball rising from BELOW brick 11, slightly off-centre
+g = Breakout()
+for b in g.bricks:
+    b.active = (b.index in (11, 5))  # row-3 idx 11 (x 105–175) and the row-2 idx 5 above it
+g._sync_bricks_to_numpy()
+g.ball_x, g.ball_y, g.ball_vx, g.ball_vy = 100.0, 140.0, 80.0, -400.0
+g.update(0.05)
+print(g.bricks[11].active, g.bricks[5].active, g.ball_vy)
+# BEFORE FIX: False  True  -400.0   <- vx flipped, ball keeps rising toward the row above
+# AFTER  FIX: False  True  +400.0   <- vy flipped, ball bounces down off the contacted brick
 ```
 
 ### Fix
-Resolve **every** overlapped brick in the frame, reflect off the **deepest** (true
-contact) brick, and only flip a velocity component that is actually carrying the ball
-into the brick:
+Two changes. First, capture the **pre-move position** at the top of `update()`:
+
+```python
+prev_ball_x, prev_ball_y = self.ball_x, self.ball_y   # for face-aware brick reflection
+self.ball_x += self.ball_vx * dt
+self.ball_y += self.ball_vy * dt
+```
+
+Then, in the brick-collision block, resolve **every** overlapped brick and choose the
+reflection axis from the face the ball **actually crossed this frame** (a swept test on
+`prev_*`), not from raw penetration depth:
 
 ```python
 overlap_idxs = np.where(overlap)[0]
+r = self.ball_radius
 
-# deepest-penetration brick = the true contact (not array order)
-ox_all = np.minimum(self.ball_x + self.ball_radius - lefts,
-                    rights - (self.ball_x - self.ball_radius))
-oy_all = np.minimum(self.ball_y + self.ball_radius - tops,
-                    bottoms - (self.ball_y - self.ball_radius))
+# contact brick = least-penetrated (the last face crossed), not array order
+ox_all = np.minimum(self.ball_x + r - lefts, rights - (self.ball_x - r))
+oy_all = np.minimum(self.ball_y + r - tops, bottoms - (self.ball_y - r))
 pen = np.minimum(ox_all, oy_all)
-pen[~overlap] = -np.inf
-hit_idx = int(np.argmax(pen))
+pen[~overlap] = np.inf
+hit_idx = int(np.argmin(pen))
 
 # deactivate EVERY overlapped brick so the ball cannot tunnel through a neighbour
 for hit in overlap_idxs:
@@ -478,20 +555,27 @@ for hit in overlap_idxs:
 
 b_left, b_right = lefts[hit_idx], rights[hit_idx]
 b_top, b_bottom = tops[hit_idx], bottoms[hit_idx]
-overlap_x = min(self.ball_x + self.ball_radius - b_left, b_right - (self.ball_x - self.ball_radius))
-overlap_y = min(self.ball_y + self.ball_radius - b_top, b_bottom - (self.ball_y - self.ball_radius))
 
-# only flip a component that is moving the ball INTO the brick (no corner-graze tunnel)
-if overlap_x < overlap_y and self.ball_vx != 0.0:
-    self.ball_vx = -self.ball_vx
-else:
+# axis = the face the ball crossed this frame (swept test on the pre-move position)
+crossed_vert  = (prev_ball_y - r >= b_bottom) or (prev_ball_y + r <= b_top)
+crossed_horiz = (prev_ball_x - r >= b_right)  or (prev_ball_x + r <= b_left)
+if crossed_vert and not crossed_horiz:
     self.ball_vy = -self.ball_vy
+elif crossed_horiz and not crossed_vert:
+    self.ball_vx = -self.ball_vx
+else:  # genuine corner: fall back to min-penetration, flip only a component moving INTO the brick
+    overlap_x = min(self.ball_x + r - b_left, b_right - (self.ball_x - r))
+    overlap_y = min(self.ball_y + r - b_top, b_bottom - (self.ball_y - r))
+    if overlap_x < overlap_y and self.ball_vx != 0.0:
+        self.ball_vx = -self.ball_vx
+    else:
+        self.ball_vy = -self.ball_vy
 ```
 
-### Regression test (add to `tests/test_logic.py`)
+### Regression tests (add to `tests/test_logic.py`)
 ```python
 def test_simultaneous_two_brick_overlap_breaks_both_and_bounces():
-    g = Breakout(width=600, height=400)
+    g = Breakout()
     for b in g.bricks:
         b.active = (b.index in (0, 1))
     g._sync_bricks_to_numpy()
@@ -499,14 +583,27 @@ def test_simultaneous_two_brick_overlap_breaks_both_and_bounces():
     g.update(0.05)
     assert g.bricks[0].active is False
     assert g.bricks[1].active is False          # neighbour no longer survives
-    assert g.ball_vy > 0                         # ball bounces down, does not tunnel
+    assert g.ball_vy > 0                         # bounces down, does not tunnel
+
+def test_upward_ball_reflects_vertically_not_through_row():
+    g = Breakout()
+    for b in g.bricks:
+        b.active = (b.index in (11, 5))
+    g._sync_bricks_to_numpy()
+    g.ball_x, g.ball_y, g.ball_vx, g.ball_vy = 100.0, 140.0, 80.0, -400.0
+    g.update(0.05)
+    assert g.bricks[11].active is False          # the contacted brick breaks
+    assert g.bricks[5].active is True            # the row above is untouched
+    assert g.ball_vy > 0                         # ball bounces DOWN, does not tunnel up a row
 ```
 
 ### Verification & impact
-Locally verified: the fix breaks both bricks and reflects the ball downward, and the
-existing single-brick collision test (`test_brick_collision_and_scoring`) is unchanged
-(score 103, brick deactivated, board-clear respawn). The change is small, has no extra
-dependencies, and only alters behaviour in the multi-overlap / corner-graze edge case.
+Locally verified on a patched copy: both reproductions now reflect the ball **downward**
+and stop at the contacted brick; the existing single-brick collision test
+(`test_brick_collision_and_scoring`) is unchanged (score 103, brick deactivated,
+board-clear respawn); and an ordinary left-face hit still flips `vx` (no over-correction).
+The change is small, has no extra dependencies, and only alters behaviour in the
+multi-overlap / fast-angled-approach edge cases.
 
 **Caveat (reproducibility):** this fix changes game dynamics, so it is **not** merged into
 the branch used for the reported experiments. If it is accepted upstream and adopted here,
