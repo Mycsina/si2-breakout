@@ -101,6 +101,38 @@ class TestBreakoutLogic(unittest.TestCase):
         self.assertEqual(self.game.checkpoint_score, 103)
         self.assertTrue(self.game.bricks_need_respawn)
 
+    def test_simultaneous_two_brick_overlap_breaks_both_and_bounces(self):
+        # Bricks 0 (x 105-175) and 1 (x 185-255); ball straddles the gap (x=180), moving up
+        for b in self.game.bricks:
+            b.active = b.index in (0, 1)
+        self.game._sync_bricks_to_numpy()
+        self.game.ball_x = 180.0
+        self.game.ball_y = 83.0
+        self.game.ball_vx = 0.0
+        self.game.ball_vy = -100.0
+
+        self.game.update(0.05)
+
+        self.assertFalse(self.game.bricks[0].active)
+        self.assertFalse(self.game.bricks[1].active)
+        self.assertGreater(self.game.ball_vy, 0)
+
+    def test_upward_ball_reflects_vertically_not_through_row(self):
+        # Ball rising from below brick 11 (row 3), off-centre; must not tunnel up into brick 5 (row 2)
+        for b in self.game.bricks:
+            b.active = b.index in (11, 5)
+        self.game._sync_bricks_to_numpy()
+        self.game.ball_x = 100.0
+        self.game.ball_y = 140.0
+        self.game.ball_vx = 80.0
+        self.game.ball_vy = -400.0
+
+        self.game.update(0.05)
+
+        self.assertFalse(self.game.bricks[11].active)
+        self.assertTrue(self.game.bricks[5].active)
+        self.assertGreater(self.game.ball_vy, 0)
+
     def test_die_resets_score_to_checkpoint(self):
         self.game.checkpoint_score = 50
         self.game.score = 75

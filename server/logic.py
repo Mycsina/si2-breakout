@@ -132,6 +132,7 @@ class Breakout:
             return
 
         # 1. Update ball position
+        prev_ball_x, prev_ball_y = self.ball_x, self.ball_y
         self.ball_x += self.ball_vx * dt
         self.ball_y += self.ball_vy * dt
 
@@ -200,36 +201,45 @@ class Breakout:
                            (self.ball_y - self.ball_radius <= bottoms))
                 
                 if np.any(overlap):
-                    # Pick the first hit brick index
-                    hit_idx = np.where(overlap)[0][0]
-                    brick_idx = int(self.brick_array[hit_idx, 5])
-                    
-                    # Deactivate in numpy array and bricks list
-                    self.brick_array[hit_idx, 4] = 0.0
-                    self.bricks[brick_idx].active = False
-                    
-                    # Specular AABB reflection off the hit brick box
+                    overlap_idxs = np.where(overlap)[0]
+                    r = self.ball_radius
+
+                    # Contact brick = least penetrated (last face crossed)
+                    ox_all = np.minimum(self.ball_x + r - lefts, rights - (self.ball_x - r))
+                    oy_all = np.minimum(self.ball_y + r - tops, bottoms - (self.ball_y - r))
+                    pen = np.minimum(ox_all, oy_all)
+                    pen[~overlap] = np.inf
+                    hit_idx = int(np.argmin(pen))
+
+                    # Deactivate every overlapped brick
+                    for hit in overlap_idxs:
+                        brick_idx = int(self.brick_array[hit, 5])
+                        self.brick_array[hit, 4] = 0.0
+                        self.bricks[brick_idx].active = False
+                        self.score += 3
+                    if self.score > self.high_score:
+                        self.high_score = self.score
+
                     b_left = lefts[hit_idx]
                     b_right = rights[hit_idx]
                     b_top = tops[hit_idx]
                     b_bottom = bottoms[hit_idx]
-                    
-                    # Calculate overlap depths
-                    overlap_x = min(self.ball_x + self.ball_radius - b_left, b_right - (self.ball_x - self.ball_radius))
-                    overlap_y = min(self.ball_y + self.ball_radius - b_top, b_bottom - (self.ball_y - self.ball_radius))
-                    
-                    if overlap_x < overlap_y:
-                        # Left/Right collision
+
+                    # Reflect off the face actually crossed this frame
+                    crossed_vert = (prev_ball_y - r >= b_bottom) or (prev_ball_y + r <= b_top)
+                    crossed_horiz = (prev_ball_x - r >= b_right) or (prev_ball_x + r <= b_left)
+                    if crossed_vert and not crossed_horiz:
+                        self.ball_vy = -self.ball_vy
+                    elif crossed_horiz and not crossed_vert:
                         self.ball_vx = -self.ball_vx
                     else:
-                        # Top/Bottom collision
-                        self.ball_vy = -self.ball_vy
-                        
-                    # Add points
-                    self.score += 3
-                    if self.score > self.high_score:
-                        self.high_score = self.score
-                        
+                        overlap_x = min(self.ball_x + r - b_left, b_right - (self.ball_x - r))
+                        overlap_y = min(self.ball_y + r - b_top, b_bottom - (self.ball_y - r))
+                        if overlap_x < overlap_y and self.ball_vx != 0.0:
+                            self.ball_vx = -self.ball_vx
+                        else:
+                            self.ball_vy = -self.ball_vy
+
                     # Check if all bricks are now cleared
                     if not np.any(self.brick_array[:, 4] == 1.0):
                         self.score += 100
